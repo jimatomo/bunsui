@@ -1,0 +1,27 @@
+{
+    "name": "bunsui-dev",
+    "workspaceFolder": "/workspace/bunsui",
+    "remoteUser": "vscode",
+    "dockerComposeFile": [
+        "./compose.yml"
+    ],
+    "service": "bunsui-dev",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                "workbench.colorCustomizations": {
+                    "titleBar.activeBackground": "#98B4D4", // タイトルバーの背景色（落ち着いた水色）
+                    "titleBar.activeForeground": "#2F4F4F", // タイトルバーの文字色（濃いグレー）
+                    "statusBar.background": "#98B4D4", // ステータスバーの背景色（落ち着いた水色）
+                    "statusBar.foreground": "#2F4F4F", // ステータスバーの文字色（濃いグレー）
+                    "activityBar.background": "#98B4D4", // アクティビティバーの背景色（落ち着いた水色）
+                    "activityBar.foreground": "#2F4F4F" // アクティビティバーの文字色（濃いグレー）
+                }
+            }
+        }
+    }
+}

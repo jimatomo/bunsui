@@ -1,0 +1,13 @@
+services:
+  bunsui-dev:
+    container_name: bunsui_dev
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ../:/workspace/bunsui:cached
+      - ~/.aws/:/home/vscode/.aws:cached
+    tty: true
+
+volumes:
+  bunsui-dev:
