@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+      - "4571:4571"
+    environment:
+      - SERVICES=s3,lambda,iam,sts,cloudwatch,logs
+      - DEFAULT_REGION=ap-northeast-1
+      - DATA_DIR=/tmp/localstack/data
+    volumes:
+      - ./localstack-data:/tmp/localstack/data
+      - /var/run/docker.sock:/var/run/docker.sock 

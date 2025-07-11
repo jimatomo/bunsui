@@ -1,0 +1,61 @@
+name: サンプルETLパイプライン
+description: CSVファイルからデータを読み取り、変換してS3に保存するサンプルパイプライン
+version: 1.0.0
+
+# パイプラインの設定
+config:
+  region: ap-northeast-1
+  timeout: 3600  # タイムアウト（秒）
+  retry: 3       # リトライ回数
+
+# ジョブの定義
+jobs:
+  - id: extract-job
+    name: データ抽出
+    type: lambda
+    description: S3からCSVファイルを読み取る
+    config:
+      function_name: extract-csv-function
+      input_bucket: sample-input-bucket
+      input_key: data/input.csv
+    
+  - id: transform-job
+    name: データ変換
+    type: lambda
+    description: データのクレンジングと変換を実行
+    depends_on:
+      - extract-job
+    config:
+      function_name: transform-data-function
+      transformation_rules:
+        - convert_to_uppercase: true
+        - remove_duplicates: true
+        - validate_schema: true
+    
+  - id: load-job
+    name: データロード
+    type: lambda
+    description: 変換されたデータをS3に保存
+    depends_on:
+      - transform-job
+    config:
+      function_name: load-to-s3-function
+      output_bucket: sample-output-bucket
+      output_key: data/output.parquet
+      format: parquet
+
+# エラーハンドリング
+error_handling:
+  on_failure: send-notification
+  notification:
+    type: sns
+    topic_arn: arn:aws:sns:ap-northeast-1:123456789012:pipeline-alerts
+
+# メタデータ
+metadata:
+  created_by: tutorial
+  created_at: 2024-01-20
+  tags:
+    - tutorial
+    - etl
+    - sample 

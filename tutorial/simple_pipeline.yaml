@@ -1,0 +1,23 @@
+name: シンプルデータ処理パイプライン
+description: 基本的なデータ処理を行うシンプルなパイプライン
+version: 1.0.0
+
+jobs:
+  - id: hello-world
+    name: Hello World ジョブ
+    type: lambda
+    description: 最初のサンプルジョブ
+    config:
+      function_name: hello-world-function
+      message: "Hello from Bunsui!"
+      
+  - id: process-data
+    name: データ処理ジョブ
+    type: lambda
+    description: 簡単なデータ処理を実行
+    depends_on:
+      - hello-world
+    config:
+      function_name: process-data-function
+      input_file: sample.txt
+      output_file: result.txt 

@@ -1,0 +1,161 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bunsui"
+version = "0.1.0"
+description = "OSS TUI Data Pipeline Management Tool for AWS"
+authors = [
+    {name = "Bunsui Development Team", email = "dev@bunsui.dev"}
+]
+maintainers = [
+    {name = "Bunsui Development Team", email = "dev@bunsui.dev"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+keywords = ["data-pipeline", "aws", "tui", "stepfunctions", "orchestration", "workflow"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "boto3>=1.20.0,<2.0.0",
+    "botocore>=1.20.0,<2.0.0",
+    "pydantic>=1.8.0,<3.0.0",
+    "click>=8.0.0,<9.0.0",
+    "rich>=10.0.0,<14.0.0",
+    "textual>=0.1.0,<1.0.0",
+    "pyyaml>=6.0,<7.0.0",
+    "python-dotenv>=0.19.0,<2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.20.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "isort>=5.10.0",
+    "mypy>=0.991",
+    "pre-commit>=2.20.0",
+    "moto>=4.0.0",
+    "localstack>=1.0.0",
+    "build>=0.8.0",
+    "twine>=4.0.0",
+    "wheel>=0.37.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.20.0",
+    "moto>=4.0.0",
+    "localstack>=1.0.0",
+]
+docs = [
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/bunsui/bunsui"
+Repository = "https://github.com/bunsui/bunsui"
+Issues = "https://github.com/bunsui/bunsui/issues"
+
+[project.scripts]
+bunsui = "bunsui.cli.main:main"
+
+[project.entry-points."bunsui.plugins"]
+# Plugin entry points for extensibility
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["bunsui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=src/bunsui --cov-report=html --cov-report=term-missing"
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+warn_untyped_fields = true
+
+[[tool.mypy.overrides]]
+module = [
+    "moto.*",
+    "localstack.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "bunsui.core.config.models"
+disable_error_code = ["call-arg"]
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E501"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+    ".mypy_cache",
+    ".pytest_cache",
+] 

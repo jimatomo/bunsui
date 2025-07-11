@@ -7,9 +7,9 @@ ARG USER_GID=$USER_UID
 # Create the user
 RUN groupadd --gid $USER_GID $USERNAME \
 && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
-# install git
+# install git and build tools
 && apt-get update \
-&& apt-get install -y  --no-install-recommends git zsh curl unzip \
+&& apt-get install -y  --no-install-recommends git zsh curl unzip build-essential \
 && apt-get -y clean \
 && rm -rf /var/lib/apt/lists/*
 
