@@ -124,21 +124,36 @@ def get(ctx: click.Context, key: str, global_config: bool, local: bool, format: 
 def list(ctx: click.Context, global_config: bool, local: bool, all: bool, format: str):
     """設定一覧を表示"""
     try:
-        config_manager = get_config_manager()
+        # 設定ファイルを直接読み込んで表示
+        config_file = Path.home() / '.bunsui' / 'config' / 'config.yaml'
         
-        # 設定を取得
-        config = config_manager.config
+        if not config_file.exists():
+            console.print("[yellow]設定ファイルが見つかりません[/yellow]")
+            return
         
-        # 設定を階層化して表示
-        config_dict = config.dict(exclude_unset=True)
+        # YAMLファイルを直接読み込み
+        with open(config_file, 'r') as f:
+            config_data = yaml.safe_load(f)
         
         if format == 'table':
-            _display_config_table(config_dict, all)
+            _display_config_table(config_data, all)
         elif format == 'json':
-            console.print(json.dumps(config_dict, indent=2, default=str))
+            console.print(json.dumps(config_data, indent=2, default=str))
         else:  # yaml
-            console.print(yaml.dump(config_dict, default_flow_style=False))
+            console.print(yaml.dump(config_data, default_flow_style=False))
             
+    except yaml.YAMLError as e:
+        console.print(f"[red]YAML parsing error: {e}[/red]")
+        console.print("[yellow]設定ファイルに無効なYAMLが含まれています。自動修復を試行します...[/yellow]")
+        
+        # 自動修復を試行
+        try:
+            _repair_config_file(config_file)
+            console.print("[green]✓ 設定ファイルを修復しました。再度実行してください。[/green]")
+        except Exception as repair_error:
+            console.print(f"[red]自動修復に失敗しました: {repair_error}[/red]")
+            console.print("[yellow]手動で修正するか、設定をリセットしてください。[/yellow]")
+        raise click.Abort()
     except ConfigurationError as e:
         console.print(f"[red]Configuration error: {e}[/red]")
         raise click.Abort()
@@ -412,6 +427,26 @@ def show(ctx: click.Context):
         raise click.Abort()
 
 
+def _repair_config_file(config_file: Path):
+    """設定ファイルを修復"""
+    import re
+    
+    # ファイルを読み込み
+    with open(config_file, 'r') as f:
+        content = f.read()
+    
+    # Pythonオブジェクトタグを削除
+    # !!python/object/apply:bunsui.aws.dynamodb.schemas.TableName を削除
+    content = re.sub(r'\? !!python/object/apply:bunsui\.aws\.dynamodb\.schemas\.TableName\s*\n\s*-\s*([^\n]+)\s*\n\s*:\s*([^\n]+)', r'\1: \2', content)
+    
+    # 複数行のマッピングを単純なキー: 値の形式に変換
+    content = re.sub(r'\? !!python/object/apply:[^\n]*\s*\n\s*-\s*([^\n]+)\s*\n\s*:\s*([^\n]+)', r'\1: \2', content)
+    
+    # 修復された内容を保存
+    with open(config_file, 'w') as f:
+        f.write(content)
+
+
 def _convert_value(value: str):
     """値を適切な型に変換"""
     # ブール値の変換
@@ -433,33 +468,32 @@ def _convert_value(value: str):
 
 
 def _display_config_table(config_dict: dict, show_all: bool = False):
-    """設定をテーブル形式で表示"""
     table = Table(title="Configuration", box=box.ROUNDED)
-    table.add_column("Section", style="cyan")
     table.add_column("Key", style="green")
     table.add_column("Value", style="yellow")
     table.add_column("Type", style="blue")
-    
-    def add_config_rows(data: dict, section: str = ""):
+
+    def add_config_rows(data: dict, depth: int = 0):
         for key, value in data.items():
+            # 冗長な設定を除外
+            if (
+                key.endswith('_prefix')
+                or key.endswith('_suffix')
+                or key in ['random_suffix']
+            ):
+                continue
             if isinstance(value, dict):
-                add_config_rows(value, f"{section}.{key}" if section else key)
+                key_disp = ("  " * depth + ("└─ " if depth > 0 else "") + str(key))
+                table.add_row(key_disp, "", "")
+                add_config_rows(value, depth + 1)
             else:
-                # 機密情報をマスク
-                if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'token']):
-                    if value:
-                        display_value = "***HIDDEN***"
-                    else:
-                        display_value = "N/A"
+                key_disp = "  " * depth + ("└─ " if depth > 0 else "") + str(key)
+                # 機密情報マスク
+                if any(s in key.lower() for s in ['password', 'secret', 'key', 'token']):
+                    display_value = "***HIDDEN***" if value else "N/A"
                 else:
                     display_value = str(value)
-                
-                table.add_row(
-                    section,
-                    key,
-                    display_value,
-                    type(value).__name__
-                )
-    
+                table.add_row(key_disp, display_value, type(value).__name__)
+
     add_config_rows(config_dict)
     console.print(table) 

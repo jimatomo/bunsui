@@ -11,7 +11,7 @@ from typing import Optional
 from .. import __version__
 
 # Import command modules
-from .commands import pipeline, session, logs, config
+from .commands import pipeline, session, logs, config, init
 from .interactive import start_interactive
 
 
@@ -74,6 +74,7 @@ cli.add_command(pipeline.pipeline)
 cli.add_command(session.session)
 cli.add_command(logs.logs)
 cli.add_command(config.config)
+cli.add_command(init.init)
 
 
 @cli.command()

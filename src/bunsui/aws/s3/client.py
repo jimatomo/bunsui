@@ -26,8 +26,13 @@ class S3Client:
     def create_bucket(self, bucket_name: str, region: Optional[str] = None) -> Dict[str, Any]:
         """Create an S3 bucket."""
         params: Dict[str, Any] = {"Bucket": bucket_name}
-        if region and region != self.region:
-            params["CreateBucketConfiguration"] = {"LocationConstraint": region}
+        
+        # リージョンの決定
+        target_region = region or self.region
+        
+        # us-east-1以外のリージョンの場合はLocationConstraintを設定
+        if target_region != "us-east-1":
+            params["CreateBucketConfiguration"] = {"LocationConstraint": target_region}
 
         return self.aws_client.call_api("create_bucket", **params)
 
