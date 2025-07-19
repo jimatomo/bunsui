@@ -166,6 +166,30 @@ class LambdaOperation(Operation):
         )
         super().__init__(operation_id, name, config, description)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LambdaOperation":
+        """Create Lambda operation from dictionary."""
+        config_data = data["config"]
+        
+        operation = cls(
+            operation_id=data["operation_id"],
+            name=data["name"],
+            function_arn=config_data.get("resource_arn", ""),
+            timeout_seconds=config_data.get("timeout_seconds", 300),
+            retry_count=config_data.get("retry_count", 3),
+            retry_delay_seconds=config_data.get("retry_delay_seconds", 60),
+            parameters=config_data.get("parameters", {}),
+            environment_variables=config_data.get("environment_variables", {}),
+            description=data.get("description"),
+        )
+
+        if "created_at" in data:
+            operation.created_at = datetime.fromisoformat(data["created_at"])
+        if "updated_at" in data:
+            operation.updated_at = datetime.fromisoformat(data["updated_at"])
+
+        return operation
+
     def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Lambda function."""
         # This would integrate with AWS Lambda client
@@ -215,6 +239,31 @@ class ECSOperation(Operation):
         )
         super().__init__(operation_id, name, config, description)
         self.cluster_name = cluster_name
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ECSOperation":
+        """Create ECS operation from dictionary."""
+        config_data = data["config"]
+        
+        operation = cls(
+            operation_id=data["operation_id"],
+            name=data["name"],
+            task_definition_arn=config_data.get("resource_arn", ""),
+            cluster_name=config_data.get("parameters", {}).get("cluster", "default"),
+            timeout_seconds=config_data.get("timeout_seconds", 3600),
+            retry_count=config_data.get("retry_count", 3),
+            retry_delay_seconds=config_data.get("retry_delay_seconds", 60),
+            parameters=config_data.get("parameters", {}),
+            environment_variables=config_data.get("environment_variables", {}),
+            description=data.get("description"),
+        )
+
+        if "created_at" in data:
+            operation.created_at = datetime.fromisoformat(data["created_at"])
+        if "updated_at" in data:
+            operation.updated_at = datetime.fromisoformat(data["updated_at"])
+
+        return operation
 
     def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute ECS task."""

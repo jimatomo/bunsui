@@ -10,8 +10,62 @@ from rich import box
 import json
 import yaml
 from datetime import datetime
+import os
+
+from ...core.session.manager import SessionManager
+from ...core.session.repository import SessionRepository
+from ...core.models.session import SessionStatus
+from ...core.pipeline.repository import PipelineRepository
+from ...aws.client import AWSClient
+from ...core.config.manager import ConfigManager
+from ...core.exceptions import ValidationError, SessionError
+from ...aws.exceptions import AWSError
 
 console = Console()
+
+
+def get_session_manager() -> SessionManager:
+    """セッションマネージャーのインスタンスを取得"""
+    try:
+        config_manager = ConfigManager()
+        aws_config = config_manager.get_aws_config()
+        
+        aws_client = AWSClient(
+            "dynamodb",
+            region_name=aws_config.region,
+            aws_access_key_id=aws_config.access_key_id,
+            aws_secret_access_key=aws_config.secret_access_key,
+            aws_session_token=aws_config.session_token,
+            profile_name=aws_config.profile
+        )
+        
+        table_name = f"{aws_config.dynamodb_table_prefix}-sessions"
+        return SessionManager(aws_client, table_name)
+    except Exception as e:
+        console.print(f"[red]Failed to initialize session manager: {e}[/red]")
+        raise click.Abort()
+
+
+def get_pipeline_repository() -> PipelineRepository:
+    """パイプラインリポジトリのインスタンスを取得"""
+    try:
+        config_manager = ConfigManager()
+        aws_config = config_manager.get_aws_config()
+        
+        aws_client = AWSClient(
+            "dynamodb",
+            region_name=aws_config.region,
+            aws_access_key_id=aws_config.access_key_id,
+            aws_secret_access_key=aws_config.secret_access_key,
+            aws_session_token=aws_config.session_token,
+            profile_name=aws_config.profile
+        )
+        
+        table_name = f"{aws_config.dynamodb_table_prefix}-pipelines"
+        return PipelineRepository(aws_client, table_name)
+    except Exception as e:
+        console.print(f"[red]Failed to initialize pipeline repository: {e}[/red]")
+        raise click.Abort()
 
 
 @click.group()
@@ -45,20 +99,57 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
             for key, value in param_dict.items():
                 console.print(f"  {key}: {value}")
         
-        # TODO: Implement actual session start logic
-        session_data = {
-            "id": f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "pipeline_id": pipeline_id,
-            "status": "starting",
+        # パイプラインの存在確認
+        pipeline_repository = get_pipeline_repository()
+        pipeline = pipeline_repository.get_pipeline(pipeline_id)
+        
+        if not pipeline:
+            console.print(f"[red]Pipeline not found: {pipeline_id}[/red]")
+            raise click.Abort()
+        
+        # セッションの作成
+        session_manager = get_session_manager()
+        
+        # メタデータの準備
+        metadata = {
             "parameters": param_dict,
-            "started_at": datetime.now().isoformat(),
-            "timeout": timeout
+            "user_name": os.getenv('USER', 'unknown'),
+            "timeout": timeout,
+            "wait": wait
         }
         
+        # セッションの作成
+        session = session_manager.create_session(
+            pipeline_id=pipeline_id,
+            metadata=metadata,
+            total_steps=len(pipeline.jobs)
+        )
+        
+        # セッションの開始
+        started_session = session_manager.start_session(session.session_id)
+        
+        console.print(f"[green]✓ Session started successfully[/green]")
+        console.print(f"Session ID: {started_session.session_id}")
+        
+        # Wait機能の実装
         if wait:
             console.print("[yellow]Waiting for session completion...[/yellow]")
-            # TODO: Implement wait logic
-            session_data["status"] = "running"
+            # ここで実際の待機ロジックを実装
+            # 現在は簡単なステータス表示のみ
+            console.print("[yellow]Note: Wait functionality will be implemented with Step Functions integration[/yellow]")
+        
+        # 結果の表示
+        session_data = {
+            "session_id": started_session.session_id,
+            "pipeline_id": started_session.pipeline_id,
+            "pipeline_name": pipeline.name,
+            "status": started_session.status.value,
+            "parameters": param_dict,
+            "started_at": started_session.started_at.isoformat() if started_session.started_at else None,
+            "timeout": timeout,
+            "total_jobs": started_session.total_jobs,
+            "user_name": started_session.user_name
+        }
         
         if format == 'table':
             table = Table(title="Session Started", box=box.ROUNDED)
@@ -76,6 +167,15 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
         else:  # yaml
             console.print(yaml.dump(session_data, default_flow_style=False))
             
+    except ValidationError as e:
+        console.print(f"[red]Validation error: {e}[/red]")
+        raise click.Abort()
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error starting session: {e}[/red]")
         raise click.Abort()
@@ -88,106 +188,165 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
 def status(ctx: click.Context, session_id: str, format: str):
     """セッションのステータスを表示"""
     try:
-        # TODO: Implement actual session status retrieval
-        session_data = {
-            "id": session_id,
-            "pipeline_id": "pipeline-1",
-            "status": "running",
-            "progress": 65,
-            "started_at": "2024-01-15T10:30:00Z",
-            "estimated_completion": "2024-01-15T11:30:00Z",
-            "jobs": [
-                {"id": "job-1", "name": "Extract", "status": "completed", "progress": 100},
-                {"id": "job-2", "name": "Transform", "status": "running", "progress": 65},
-                {"id": "job-3", "name": "Load", "status": "pending", "progress": 0}
-            ]
-        }
+        # セッションの取得
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+            raise click.Abort()
+        
+        # パイプライン情報の取得
+        pipeline_repository = get_pipeline_repository()
+        pipeline = pipeline_repository.get_pipeline(session.pipeline_id)
+        
+        # セッション統計の取得
+        stats = session_manager.get_session_statistics(session_id)
         
         if format == 'table':
-            console.print(f"[bold blue]Session: {session_id}[/bold blue]")
-            console.print(f"Pipeline: {session_data['pipeline_id']}")
-            console.print(f"Status: {session_data['status']}")
-            console.print(f"Progress: {session_data['progress']}%")
-            console.print(f"Started: {session_data['started_at']}")
-            console.print(f"Estimated completion: {session_data['estimated_completion']}")
+            console.print(f"[bold blue]Session: {session.session_id}[/bold blue]")
+            console.print(f"Pipeline: {session.pipeline_id}")
+            console.print(f"Pipeline Name: {pipeline.name if pipeline else 'N/A'}")
+            console.print(f"Status: {session.status.value}")
+            console.print(f"Progress: {stats['progress']['completion_percentage']:.1f}%")
+            console.print(f"Started: {session.started_at.strftime('%Y-%m-%d %H:%M:%S') if session.started_at else 'N/A'}")
+            console.print(f"Completed: {session.completed_at.strftime('%Y-%m-%d %H:%M:%S') if session.completed_at else 'N/A'}")
+            console.print(f"User: {session.user_name or 'N/A'}")
+            console.print(f"Total Jobs: {session.total_jobs}")
+            console.print(f"Completed Jobs: {session.completed_jobs}")
+            console.print(f"Failed Jobs: {session.failed_jobs}")
             
-            if session_data.get('jobs'):
-                table = Table(title="Jobs", box=box.ROUNDED)
-                table.add_column("ID", style="cyan")
-                table.add_column("Name", style="green")
-                table.add_column("Status", style="yellow")
-                table.add_column("Progress", style="blue")
+            if session.error_message:
+                console.print(f"[red]Error: {session.error_message}[/red]")
+            
+            # 実行時間の表示
+            if 'current_runtime_seconds' in stats:
+                runtime = stats['current_runtime_seconds']
+                console.print(f"Current Runtime: {runtime:.1f}s")
+            elif 'total_runtime_seconds' in stats:
+                runtime = stats['total_runtime_seconds']
+                console.print(f"Total Runtime: {runtime:.1f}s")
+            
+            # チェックポイントの表示
+            if session.checkpoints:
+                console.print(f"\n[bold]Recent Checkpoints:[/bold]")
+                # 最新5件のチェックポイントを表示
+                recent_checkpoints = sorted(session.checkpoints, key=lambda x: x.created_at, reverse=True)[:5]
                 
-                for job in session_data['jobs']:
-                    status_color = "green" if job["status"] == "completed" else "yellow"
-                    table.add_row(
-                        job["id"],
-                        job["name"],
-                        f"[{status_color}]{job['status']}[/{status_color}]",
-                        f"{job['progress']}%"
+                checkpoint_table = Table(title="Checkpoints", box=box.ROUNDED)
+                checkpoint_table.add_column("Time", style="cyan")
+                checkpoint_table.add_column("Job", style="green")
+                checkpoint_table.add_column("Type", style="yellow")
+                checkpoint_table.add_column("Message", style="blue")
+                
+                for checkpoint in recent_checkpoints:
+                    checkpoint_table.add_row(
+                        checkpoint.created_at.strftime('%H:%M:%S'),
+                        checkpoint.job_id,
+                        checkpoint.checkpoint_type.value,
+                        checkpoint.message or "N/A"
                     )
                 
-                console.print(table)
+                console.print(checkpoint_table)
+                
         elif format == 'json':
+            session_data = {
+                "session_id": session.session_id,
+                "pipeline_id": session.pipeline_id,
+                "pipeline_name": pipeline.name if pipeline else None,
+                "status": session.status.value,
+                "progress": stats['progress'],
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+                "error_message": session.error_message,
+                "error_code": session.error_code,
+                "user_name": session.user_name,
+                "configuration": session.configuration,
+                "tags": session.tags,
+                "checkpoints": [
+                    {
+                        "checkpoint_id": cp.checkpoint_id,
+                        "type": cp.checkpoint_type.value,
+                        "job_id": cp.job_id,
+                        "created_at": cp.created_at.isoformat(),
+                        "message": cp.message
+                    }
+                    for cp in session.checkpoints
+                ],
+                "statistics": stats
+            }
             console.print(json.dumps(session_data, indent=2))
         else:  # yaml
+            session_data = {
+                "session_id": session.session_id,
+                "pipeline_id": session.pipeline_id,
+                "pipeline_name": pipeline.name if pipeline else None,
+                "status": session.status.value,
+                "progress": stats['progress'],
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+                "error_message": session.error_message,
+                "error_code": session.error_code,
+                "user_name": session.user_name,
+                "configuration": session.configuration,
+                "tags": session.tags,
+                "checkpoints": [
+                    {
+                        "checkpoint_id": cp.checkpoint_id,
+                        "type": cp.checkpoint_type.value,
+                        "job_id": cp.job_id,
+                        "created_at": cp.created_at.isoformat(),
+                        "message": cp.message
+                    }
+                    for cp in session.checkpoints
+                ],
+                "statistics": stats
+            }
             console.print(yaml.dump(session_data, default_flow_style=False))
             
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error getting session status: {e}[/red]")
         raise click.Abort()
 
 
 @session.command()
-@click.argument('session_id')
 @click.option('--format', type=click.Choice(['table', 'json', 'yaml']), default='table', help='Output format')
 @click.option('--status', help='Filter by status')
 @click.option('--pipeline', help='Filter by pipeline ID')
 @click.option('--limit', type=int, default=50, help='Maximum number of sessions to show')
 @click.pass_context
-def list(ctx: click.Context, session_id: Optional[str], format: str, status: Optional[str],
-          pipeline: Optional[str], limit: int):
+def list(ctx: click.Context, format: str, status: Optional[str], pipeline: Optional[str], limit: int):
     """セッション一覧を表示"""
     try:
-        # TODO: Implement actual session listing
-        sessions = [
-            {
-                "id": "session-1",
-                "pipeline_id": "pipeline-1",
-                "status": "running",
-                "progress": 65,
-                "started_at": "2024-01-15T10:30:00Z",
-                "estimated_completion": "2024-01-15T11:30:00Z"
-            },
-            {
-                "id": "session-2",
-                "pipeline_id": "pipeline-2",
-                "status": "completed",
-                "progress": 100,
-                "started_at": "2024-01-15T09:00:00Z",
-                "completed_at": "2024-01-15T10:00:00Z"
-            },
-            {
-                "id": "session-3",
-                "pipeline_id": "pipeline-1",
-                "status": "failed",
-                "progress": 30,
-                "started_at": "2024-01-15T08:00:00Z",
-                "failed_at": "2024-01-15T08:30:00Z"
-            }
-        ]
+        # セッション管理の取得
+        session_manager = get_session_manager()
         
-        if session_id:
-            sessions = [s for s in sessions if s["id"] == session_id]
-        
+        # ステータスフィルタの準備
+        status_filter = None
         if status:
-            sessions = [s for s in sessions if s["status"] == status]
+            try:
+                status_filter = SessionStatus(status)
+            except ValueError:
+                console.print(f"[red]Invalid status: {status}[/red]")
+                console.print(f"Valid statuses: {', '.join([s.value for s in SessionStatus])}")
+                raise click.Abort()
         
-        if pipeline:
-            sessions = [s for s in sessions if s["pipeline_id"] == pipeline]
+        # セッション一覧の取得
+        sessions = session_manager.list_sessions(
+            pipeline_id=pipeline,
+            status=status_filter,
+            limit=limit
+        )
         
-        if limit:
-            sessions = sessions[:limit]
+        if not sessions:
+            console.print("[yellow]No sessions found[/yellow]")
+            return
         
         if format == 'table':
             table = Table(title="Sessions", box=box.ROUNDED)
@@ -199,23 +358,70 @@ def list(ctx: click.Context, session_id: Optional[str], format: str, status: Opt
             table.add_column("Completed", style="red")
             
             for session in sessions:
-                status_color = "green" if session["status"] == "completed" else "red" if session["status"] == "failed" else "yellow"
-                completed = session.get("completed_at", session.get("failed_at", ""))
+                status_color = {
+                    "completed": "green",
+                    "failed": "red",
+                    "running": "yellow",
+                    "paused": "blue",
+                    "cancelled": "gray"
+                }.get(session.status.value, "gray")
+                
+                progress = session.get_progress_percentage()
+                completed_time = session.completed_at.strftime('%Y-%m-%d %H:%M:%S') if session.completed_at else "N/A"
+                
                 table.add_row(
-                    session["id"],
-                    session["pipeline_id"],
-                    f"[{status_color}]{session['status']}[/{status_color}]",
-                    f"{session['progress']}%",
-                    session["started_at"],
-                    completed
+                    session.session_id[:12] + "..." if len(session.session_id) > 15 else session.session_id,
+                    session.pipeline_id[:12] + "..." if len(session.pipeline_id) > 15 else session.pipeline_id,
+                    f"[{status_color}]{session.status.value}[/{status_color}]",
+                    f"{progress:.1f}%",
+                    session.started_at.strftime('%Y-%m-%d %H:%M:%S') if session.started_at else "N/A",
+                    completed_time
                 )
             
             console.print(table)
         elif format == 'json':
-            console.print(json.dumps(sessions, indent=2))
+            sessions_data = [
+                {
+                    "session_id": s.session_id,
+                    "pipeline_id": s.pipeline_id,
+                    "pipeline_name": s.pipeline_name,
+                    "status": s.status.value,
+                    "progress": s.get_progress_percentage(),
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                    "user_name": s.user_name,
+                    "total_jobs": s.total_jobs,
+                    "completed_jobs": s.completed_jobs,
+                    "failed_jobs": s.failed_jobs
+                }
+                for s in sessions
+            ]
+            console.print(json.dumps(sessions_data, indent=2))
         else:  # yaml
-            console.print(yaml.dump(sessions, default_flow_style=False))
+            sessions_data = [
+                {
+                    "session_id": s.session_id,
+                    "pipeline_id": s.pipeline_id,
+                    "pipeline_name": s.pipeline_name,
+                    "status": s.status.value,
+                    "progress": s.get_progress_percentage(),
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                    "user_name": s.user_name,
+                    "total_jobs": s.total_jobs,
+                    "completed_jobs": s.completed_jobs,
+                    "failed_jobs": s.failed_jobs
+                }
+                for s in sessions
+            ]
+            console.print(yaml.dump(sessions_data, default_flow_style=False))
             
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error listing sessions: {e}[/red]")
         raise click.Abort()
@@ -223,19 +429,30 @@ def list(ctx: click.Context, session_id: Optional[str], format: str, status: Opt
 
 @session.command()
 @click.argument('session_id')
-@click.option('--force', is_flag=True, help='Force pause without confirmation')
 @click.pass_context
-def pause(ctx: click.Context, session_id: str, force: bool):
+def pause(ctx: click.Context, session_id: str):
     """セッションを一時停止"""
     try:
-        if not force:
-            if not click.confirm(f"Are you sure you want to pause session '{session_id}'?"):
-                console.print("[yellow]Pause cancelled[/yellow]")
-                return
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
         
-        # TODO: Implement actual session pause logic
-        console.print(f"[green]Paused session: {session_id}[/green]")
+        if not session:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+            raise click.Abort()
         
+        # セッションの一時停止
+        paused_session = session_manager.pause_session(session_id)
+        
+        console.print(f"[green]✓ Session paused successfully[/green]")
+        console.print(f"Session ID: {paused_session.session_id}")
+        console.print(f"Status: {paused_session.status.value}")
+        
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error pausing session: {e}[/red]")
         raise click.Abort()
@@ -247,9 +464,26 @@ def pause(ctx: click.Context, session_id: str, force: bool):
 def resume(ctx: click.Context, session_id: str):
     """セッションを再開"""
     try:
-        # TODO: Implement actual session resume logic
-        console.print(f"[green]Resumed session: {session_id}[/green]")
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
         
+        if not session:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+            raise click.Abort()
+        
+        # セッションの再開
+        resumed_session = session_manager.resume_session(session_id)
+        
+        console.print(f"[green]✓ Session resumed successfully[/green]")
+        console.print(f"Session ID: {resumed_session.session_id}")
+        console.print(f"Status: {resumed_session.status.value}")
+        
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error resuming session: {e}[/red]")
         raise click.Abort()
@@ -262,14 +496,37 @@ def resume(ctx: click.Context, session_id: str):
 def cancel(ctx: click.Context, session_id: str, force: bool):
     """セッションをキャンセル"""
     try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+            raise click.Abort()
+        
         if not force:
-            if not click.confirm(f"Are you sure you want to cancel session '{session_id}'?"):
+            console.print(f"[yellow]Session Details:[/yellow]")
+            console.print(f"  ID: {session.session_id}")
+            console.print(f"  Pipeline: {session.pipeline_id}")
+            console.print(f"  Status: {session.status.value}")
+            console.print(f"  Progress: {session.get_progress_percentage():.1f}%")
+            
+            if not click.confirm(f"Are you sure you want to cancel session '{session.session_id}'?"):
                 console.print("[yellow]Cancellation cancelled[/yellow]")
                 return
         
-        # TODO: Implement actual session cancellation logic
-        console.print(f"[green]Cancelled session: {session_id}[/green]")
+        # セッションのキャンセル
+        cancelled_session = session_manager.cancel_session(session_id)
         
+        console.print(f"[green]✓ Session cancelled successfully[/green]")
+        console.print(f"Session ID: {cancelled_session.session_id}")
+        console.print(f"Status: {cancelled_session.status.value}")
+        
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[red]Error cancelling session: {e}[/red]")
         raise click.Abort() 

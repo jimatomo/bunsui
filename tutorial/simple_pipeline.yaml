@@ -1,23 +1,43 @@
-name: シンプルデータ処理パイプライン
-description: 基本的なデータ処理を行うシンプルなパイプライン
-version: 1.0.0
+name: "シンプルデータ処理パイプライン"
+description: "基本的なデータ処理を行うシンプルなパイプライン"
+version: "1.0.0"
+timeout_seconds: 3600
+max_concurrent_jobs: 5
+
+tags:
+  environment: "tutorial"
+  level: "beginner"
+
+metadata:
+  created_by: "tutorial"
+  purpose: "学習用サンプル"
 
 jobs:
-  - id: hello-world
-    name: Hello World ジョブ
-    type: lambda
-    description: 最初のサンプルジョブ
-    config:
-      function_name: hello-world-function
-      message: "Hello from Bunsui!"
+  - job_id: "hello-world"
+    name: "Hello World ジョブ"
+    description: "最初のサンプルジョブ"
+    operations:
+      - operation_id: "hello-world-lambda"
+        name: "Hello World Lambda"
+        config:
+          operation_type: "lambda"
+          resource_arn: "arn:aws:lambda:us-east-1:123456789012:function:hello-world-function"
+          timeout_seconds: 300
+          parameters:
+            message: "Hello from Bunsui!"
+    dependencies: []
       
-  - id: process-data
-    name: データ処理ジョブ
-    type: lambda
-    description: 簡単なデータ処理を実行
-    depends_on:
-      - hello-world
-    config:
-      function_name: process-data-function
-      input_file: sample.txt
-      output_file: result.txt 
+  - job_id: "process-data"
+    name: "データ処理ジョブ"
+    description: "簡単なデータ処理を実行"
+    operations:
+      - operation_id: "process-data-lambda"
+        name: "Process Data Lambda"
+        config:
+          operation_type: "lambda"
+          resource_arn: "arn:aws:lambda:us-east-1:123456789012:function:process-data-function"
+          timeout_seconds: 600
+          parameters:
+            input_file: "sample.txt"
+            output_file: "result.txt"
+    dependencies: ["hello-world"] 

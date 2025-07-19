@@ -1,0 +1,60 @@
+name: "Data Processing Pipeline"
+description: "Sample ETL pipeline for data processing"
+version: "1.0.0"
+timeout_seconds: 3600
+max_concurrent_jobs: 5
+
+tags:
+  environment: "development"
+  team: "data-engineering"
+  project: "sample-etl"
+
+metadata:
+  created_by: "pipeline-cli"
+  purpose: "sample-demonstration"
+
+jobs:
+  - job_id: "extract-job"
+    name: "Extract Data"
+    description: "Extract data from source systems"
+    operations:
+      - operation_id: "extract-s3"
+        name: "Extract from S3"
+        config:
+          operation_type: "lambda"
+          resource_arn: "arn:aws:lambda:us-east-1:123456789012:function:extract-data"
+          timeout_seconds: 300
+          parameters:
+            source_bucket: "data-source-bucket"
+            file_pattern: "*.csv"
+    dependencies: []
+    
+  - job_id: "transform-job"
+    name: "Transform Data"
+    description: "Transform and clean data"
+    operations:
+      - operation_id: "transform-ecs"
+        name: "Transform via ECS"
+        config:
+          operation_type: "ecs"
+          resource_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/transform-task"
+          timeout_seconds: 1800
+          parameters:
+            cpu: 1024
+            memory: 2048
+    dependencies: ["extract-job"]
+    
+  - job_id: "load-job"
+    name: "Load Data"
+    description: "Load transformed data to destination"
+    operations:
+      - operation_id: "load-redshift"
+        name: "Load to Redshift"
+        config:
+          operation_type: "lambda"
+          resource_arn: "arn:aws:lambda:us-east-1:123456789012:function:load-data"
+          timeout_seconds: 600
+          parameters:
+            destination_table: "processed_data"
+            batch_size: 1000
+    dependencies: ["transform-job"] 
