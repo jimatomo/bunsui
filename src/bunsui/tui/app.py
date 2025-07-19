@@ -21,10 +21,11 @@ from textual.widgets import (
 )
 from textual import work
 
-from bunsui.core.models.session import Session, SessionStatus
+from bunsui.core.models.session import SessionMetadata, SessionStatus
 from bunsui.core.models.pipeline import Pipeline, Job, Operation
 from bunsui.core.session.manager import SessionManager
-from bunsui.aws.dynamodb.repository import SessionRepository, PipelineRepository
+from bunsui.core.session.repository import SessionRepository
+from bunsui.core.pipeline.repository import PipelineRepository
 from bunsui.aws.stepfunctions.client import StepFunctionsClient
 from bunsui.aws.client import AWSClient
 
@@ -67,7 +68,7 @@ class SessionTable(DataTable):
             "Session ID", "Pipeline", "Status", "Created", "Duration", "Progress"
         )
 
-    def update_sessions(self, sessions: List[Session]) -> None:
+    def update_sessions(self, sessions: List[SessionMetadata]) -> None:
         """Update session table."""
         self.clear()
 
@@ -173,8 +174,8 @@ class BunsuiApp(App):
 
         # UI state
         self.current_pipeline: Optional[Pipeline] = None
-        self.current_session: Optional[Session] = None
-        self.sessions: List[Session] = []
+        self.current_session: Optional[SessionMetadata] = None
+        self.sessions: List[SessionMetadata] = []
         self.pipelines: List[Pipeline] = []
 
     def compose(self) -> ComposeResult:
@@ -207,13 +208,47 @@ class BunsuiApp(App):
     def initialize_services(self) -> None:
         """Initialize AWS services."""
         try:
-            # Create AWS client for DynamoDB
-            aws_client = AWSClient("dynamodb")
+            from ..core.config.manager import get_config_manager
             
-            self.session_repository = SessionRepository(region="us-east-1")
-            self.pipeline_repository = PipelineRepository(region="us-east-1")
-            self.step_functions_client = StepFunctionsClient(region="us-east-1")
-            self.session_manager = SessionManager(aws_client)
+            # Get configuration
+            config_manager = get_config_manager()
+            aws_config = config_manager.get_aws_config()
+            
+            # Create AWS clients with proper configuration
+            dynamodb_client = AWSClient(
+                "dynamodb",
+                region_name=aws_config.region,
+                profile_name=aws_config.profile,
+                aws_access_key_id=aws_config.access_key_id,
+                aws_secret_access_key=aws_config.secret_access_key,
+                aws_session_token=aws_config.session_token
+            )
+            
+            stepfunctions_client = AWSClient(
+                "stepfunctions",
+                region_name=aws_config.region,
+                profile_name=aws_config.profile,
+                aws_access_key_id=aws_config.access_key_id,
+                aws_secret_access_key=aws_config.secret_access_key,
+                aws_session_token=aws_config.session_token
+            )
+            
+            # Initialize repositories with proper parameters
+            table_prefix = aws_config.dynamodb_table_prefix or "bunsui"
+            
+            self.session_repository = SessionRepository(
+                aws_client=dynamodb_client,
+                table_name=f"{table_prefix}-sessions"
+            )
+            self.pipeline_repository = PipelineRepository(
+                aws_client=dynamodb_client,
+                table_name=f"{table_prefix}-pipelines"
+            )
+            self.step_functions_client = StepFunctionsClient(region=aws_config.region)
+            self.session_manager = SessionManager(
+                aws_client=dynamodb_client,
+                table_name=f"{table_prefix}-sessions"
+            )
 
             # Update status
             status_label = self.query_one("#status-label", Label)
@@ -232,30 +267,44 @@ class BunsuiApp(App):
         """Load pipelines asynchronously."""
         try:
             if self.pipeline_repository:
-                # For now, load from mock data
-                # In real implementation, this would load from DynamoDB
-                self.pipelines = self.get_mock_pipelines()
+                # Load from DynamoDB
+                self.pipelines = self.pipeline_repository.list_pipelines(limit=50)
+                
+                # If no pipelines found, show info message
+                if not self.pipelines:
+                    self.notify("No pipelines found. Create your first pipeline to get started.", severity="information")
                 
                 # Update UI
                 pipeline_tree = self.query_one("#pipeline-tree", PipelineTree)
                 pipeline_tree.update_pipelines(self.pipelines)
         except Exception as e:
             self.notify(f"Error loading pipelines: {str(e)}", severity="error")
+            # Fallback to mock data for demo purposes
+            self.pipelines = self.get_mock_pipelines()
+            pipeline_tree = self.query_one("#pipeline-tree", PipelineTree)
+            pipeline_tree.update_pipelines(self.pipelines)
 
     @work(thread=True)
     def load_sessions(self) -> None:
         """Load sessions asynchronously."""
         try:
             if self.session_repository:
-                # For now, load from mock data
-                # In real implementation, this would load from DynamoDB
-                self.sessions = self.get_mock_sessions()
+                # Load from DynamoDB
+                self.sessions = self.session_repository.list_sessions(limit=50)
+                
+                # If no sessions found, show info message
+                if not self.sessions:
+                    self.notify("No sessions found. Start a pipeline to create your first session.", severity="information")
                 
                 # Update UI
                 session_table = self.query_one("#session-table", SessionTable)
                 session_table.update_sessions(self.sessions)
         except Exception as e:
             self.notify(f"Error loading sessions: {str(e)}", severity="error")
+            # Fallback to mock data for demo purposes
+            self.sessions = self.get_mock_sessions()
+            session_table = self.query_one("#session-table", SessionTable)
+            session_table.update_sessions(self.sessions)
 
     def get_mock_pipelines(self) -> List[Pipeline]:
         """Get mock pipeline data."""
@@ -329,21 +378,57 @@ class BunsuiApp(App):
 
         return [pipeline]
 
-    def get_mock_sessions(self) -> List[Session]:
+    def get_mock_sessions(self) -> List[SessionMetadata]:
         """Get mock session data."""
-        session1 = Session.create(
-            pipeline_id="pipeline-1", user_id="user-1", pipeline_name="ML Pipeline"
+        from datetime import datetime, timezone
+        
+        session1 = SessionMetadata(
+            session_id="session-1",
+            pipeline_id="pipeline-1",
+            pipeline_name="ML Pipeline",
+            status=SessionStatus.RUNNING,
+            total_jobs=2,
+            completed_jobs=1,
+            failed_jobs=0,
+            user_id="user-1",
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=None,
+            execution_arn=None,
+            execution_name=None,
+            state_machine_arn=None,
+            error_message=None,
+            error_code=None,
+            retry_count=0,
+            max_retries=3,
+            user_name=None,
+            environment=None,
+            region=None
         )
-        session1.status = SessionStatus.RUNNING
-        session1.total_jobs = 2
-        session1.completed_jobs = 1
 
-        session2 = Session.create(
-            pipeline_id="pipeline-1", user_id="user-1", pipeline_name="ML Pipeline"
+        session2 = SessionMetadata(
+            session_id="session-2",
+            pipeline_id="pipeline-1",
+            pipeline_name="ML Pipeline",
+            status=SessionStatus.COMPLETED,
+            total_jobs=2,
+            completed_jobs=2,
+            failed_jobs=0,
+            user_id="user-1",
+            created_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+            execution_arn=None,
+            execution_name=None,
+            state_machine_arn=None,
+            error_message=None,
+            error_code=None,
+            retry_count=0,
+            max_retries=3,
+            user_name=None,
+            environment=None,
+            region=None
         )
-        session2.status = SessionStatus.COMPLETED
-        session2.total_jobs = 2
-        session2.completed_jobs = 2
 
         return [session1, session2]
 
@@ -372,7 +457,7 @@ class BunsuiApp(App):
                     self.load_session_logs(session)
                     break
 
-    def load_session_logs(self, session: Session) -> None:
+    def load_session_logs(self, session: SessionMetadata) -> None:
         """Load logs for a session."""
         # Mock log data
         logs = [

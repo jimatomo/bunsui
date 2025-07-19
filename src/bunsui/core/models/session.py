@@ -84,6 +84,7 @@ class SessionMetadata(BaseModel):
     # Execution details
     execution_arn: Optional[str] = Field(None, description="Step Functions execution ARN")
     execution_name: Optional[str] = Field(None, description="Step Functions execution name")
+    state_machine_arn: Optional[str] = Field(None, description="Step Functions state machine ARN")
     
     # Progress tracking
     total_jobs: int = Field(0, ge=0)
