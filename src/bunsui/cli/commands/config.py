@@ -448,30 +448,6 @@ class ConfigCommandHandler:
     """設定コマンドのハンドラー"""
     
     @staticmethod
-    def set_config(key: str, value: str):
-        """設定値を設定"""
-        try:
-            config_manager = get_config_manager()
-            converted_value = ConfigCommandHandler._convert_value(value)
-            
-            config_manager.set_value(key, converted_value)
-            config_manager.save_config()
-            
-            console.print(f"[green]✓ 設定が正常に更新されました[/green]")
-            console.print(f"キー: {key}")
-            console.print(f"値: {converted_value}")
-            
-            if config_manager.loaded_config_file:
-                console.print(f"保存先: {config_manager.loaded_config_file}")
-                
-        except ConfigurationError as e:
-            console.print(f"[red]設定エラー: {e}[/red]")
-            raise click.Abort()
-        except Exception as e:
-            console.print(f"[red]設定エラー: {e}[/red]")
-            raise click.Abort()
-    
-    @staticmethod
     def display_configs(format: str):
         """設定を表示"""
         try:
@@ -503,34 +479,6 @@ class ConfigCommandHandler:
         except Exception as e:
             console.print(f"[red]情報取得エラー: {e}[/red]")
             raise click.Abort()
-    
-    @staticmethod
-    def _convert_value(value: str) -> Any:
-        """文字列値を適切な型に変換"""
-        # ブール値
-        if value.lower() in ['true', 'false']:
-            return value.lower() == 'true'
-        
-        # 整数
-        try:
-            return int(value)
-        except ValueError:
-            pass
-        
-        # 浮動小数点数
-        try:
-            return float(value)
-        except ValueError:
-            pass
-        
-        # JSON文字列
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, ValueError):
-            pass
-        
-        # 文字列として返す
-        return value
     
     @staticmethod
     def _display_config_table(config_data: Dict[str, Any]):
@@ -614,15 +562,6 @@ class ConfigCommandHandler:
 def config():
     """設定管理コマンド"""
     pass
-
-
-@config.command()
-@click.argument('key')
-@click.argument('value')
-@click.pass_context
-def set(ctx: click.Context, key: str, value: str):
-    """設定値を設定"""
-    ConfigCommandHandler.set_config(key, value)
 
 
 @config.command()
