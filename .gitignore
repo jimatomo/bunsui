@@ -211,3 +211,65 @@ __marimo__/
 
 # 開発終了するまでgithub actionsのワークフローを無効化
 .github/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor temporary files
+*~
+*.swp
+*.swo
+*.tmp
+*.temp
+
+# Security and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+secrets.json
+credentials.json
+
+# Local development files
+local_config.yaml
+local_config.yml
+dev_config.yaml
+dev_config.yml
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Node.js (if any frontend components are added later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+.dockerignore
+
+# Terraform (if infrastructure as code is added)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Local test data
+test_data/
+sample_data/
+mock_data/
