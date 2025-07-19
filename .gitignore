@@ -208,3 +208,6 @@ __marimo__/
 
 # .bunsui (local test files)
 .bunsui/
+
+# 開発終了するまでgithub actionsのワークフローを無効化
+.github/
