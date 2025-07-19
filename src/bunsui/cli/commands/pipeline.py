@@ -238,7 +238,7 @@ def list(ctx: click.Context, format: str, status: Optional[str], limit: int, all
             for pipeline in pipelines:
                 status_color = "green" if pipeline.status == PipelineStatus.ACTIVE else "red"
                 table.add_row(
-                    pipeline.pipeline_id[:12] + "..." if len(pipeline.pipeline_id) > 15 else pipeline.pipeline_id,
+                    pipeline.pipeline_id,
                     pipeline.name,
                     pipeline.version,
                     f"[{status_color}]{pipeline.status.value}[/{status_color}]",
@@ -387,7 +387,7 @@ def show(ctx: click.Context, pipeline_id: str, format: str):
                     dependencies_str = ", ".join(job.dependencies) if job.dependencies else "None"
                     
                     table.add_row(
-                        job.job_id[:12] + "..." if len(job.job_id) > 15 else job.job_id,
+                        job.job_id,
                         job.name,
                         f"[{status_color}]{job.status.value}[/{status_color}]",
                         str(len(job.operations)),
