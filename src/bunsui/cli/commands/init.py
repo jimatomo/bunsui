@@ -190,57 +190,35 @@ class InteractiveSelector:
 selector = InteractiveSelector(console)
 
 
-@click.group()
-def init():
-    """Bunsui初期化コマンド"""
-    pass
-
-
-@init.command()
-@click.option('--mode', type=click.Choice(['interactive', 'offline', 'aws', 'production']), 
-              default='interactive', help='初期化モード')
-@click.option('--region', '-r', help='AWS region (aws/production mode)')
-@click.option('--profile', '-p', help='AWS profile to use (aws/production mode)')
-@click.option('--force', is_flag=True, help='既存の設定を強制上書き')
-@click.option('--samples-only', is_flag=True, help='サンプルファイルのみ配置')
-@click.option('--config-dir', help='設定ディレクトリの場所（デフォルト: ~/.bunsui）')
+@click.command(context_settings={'help_option_names': ['-h', '--help']})
 @click.pass_context
-def setup(ctx: click.Context, mode: str, region: Optional[str], profile: Optional[str], 
-          force: bool, samples_only: bool, config_dir: Optional[str]):
-    """Bunsuiの初期セットアップを実行"""
+def init(ctx: click.Context):
+    """Bunsuiの初期化を実行。インタラクティブに設定を行い、既存設定がある場合は確認します。"""
     
-    if samples_only:
-        _setup_samples_only(ctx)
-        return
-    
-    # 設定ディレクトリの決定
-    if config_dir:
-        base_config_dir = Path(config_dir)
-    else:
-        base_config_dir = Path.home() / '.bunsui'
+    # メインの初期化処理
+    _handle_main_setup(ctx)
+
+
+def _handle_main_setup(ctx: click.Context):
+    """メインの初期化処理"""
+    # 設定ディレクトリの決定（デフォルト: ~/.bunsui）
+    base_config_dir = Path.home() / '.bunsui'
     
     console.print(Panel.fit(
         "[bold blue]Bunsui 初期化ウィザード[/bold blue]\n"
-        f"モード: {mode}\n"
+        f"モード: インタラクティブ\n"
         f"設定ディレクトリ: {base_config_dir}",
         title="🚀 Bunsui Setup"
     ))
     
-    # 既存設定のチェック
-    if not force and _check_existing_setup(base_config_dir):
+    # 既存設定のチェック（force=Falseで確認）
+    if _check_existing_setup(base_config_dir):
         if not Confirm.ask("既存の設定が見つかりました。続行しますか？"):
             console.print("[yellow]初期化がキャンセルされました[/yellow]")
             return
     
     # モード別の初期化実行
-    if mode == 'interactive':
-        _setup_interactive(ctx, base_config_dir, force)
-    elif mode == 'offline':
-        _setup_offline(ctx, base_config_dir, force)
-    elif mode == 'aws':
-        _setup_aws(ctx, base_config_dir, region, profile, force)
-    elif mode == 'production':
-        _setup_production(ctx, base_config_dir, region, profile, force)
+    _setup_interactive(ctx, base_config_dir)
     
     console.print(Panel.fit(
         "[bold green]✅ 初期化が完了しました！[/bold green]\n\n"
@@ -258,7 +236,7 @@ def _check_existing_setup(config_dir: Path) -> bool:
     return (config_dir / 'config' / 'config.yaml').exists()
 
 
-def _setup_interactive(ctx: click.Context, config_dir: Path, force: bool):
+def _setup_interactive(ctx: click.Context, config_dir: Path):
     """インタラクティブセットアップ"""
     console.print("[bold cyan]インタラクティブセットアップを開始します[/bold cyan]")
     
@@ -278,35 +256,37 @@ def _setup_interactive(ctx: click.Context, config_dir: Path, force: bool):
     )
     
     if purpose == "learning":
-        _setup_offline(ctx, config_dir, force)
+        _setup_offline(ctx, config_dir)
     elif purpose == "development":
         # AWS設定の詳細選択
-        _setup_aws_interactive(ctx, config_dir, force, is_production=False)
+        _setup_aws_interactive(ctx, config_dir, is_production=False)
     else:  # production
-        _setup_aws_interactive(ctx, config_dir, force, is_production=True)
+        _setup_aws_interactive(ctx, config_dir, is_production=True)
 
 
-def _setup_aws_interactive(ctx: click.Context, config_dir: Path, force: bool, is_production: bool):
+def _setup_aws_interactive(ctx: click.Context, config_dir: Path, is_production: bool):
     """AWS設定のインタラクティブセットアップ"""
     console.print(f"[bold blue]AWS {'本番' if is_production else '開発'}環境の設定[/bold blue]")
     
-
+    # デフォルト値の設定
+    default_region = "us-east-1"
+    default_profile = "production" if is_production else ""
     
-    aws_region = Prompt.ask("AWS リージョンを入力", default="us-east-1")
+    aws_region = Prompt.ask("AWS リージョンを入力", default=default_region)
     
     # AWSプロファイル選択
     if is_production:
-        aws_profile = Prompt.ask("AWS プロファイル名", default="production")
+        aws_profile = Prompt.ask("AWS プロファイル名", default=default_profile)
     else:
-        aws_profile = Prompt.ask("AWS プロファイル名（オプション）", default="")
+        aws_profile = Prompt.ask("AWS プロファイル名（オプション）", default=default_profile)
     
     if is_production:
-        _setup_production(ctx, config_dir, aws_region, aws_profile, force)
+        _setup_production(ctx, config_dir, aws_region, aws_profile)
     else:
-        _setup_aws(ctx, config_dir, aws_region, aws_profile or None, force)
+        _setup_aws(ctx, config_dir, aws_region, aws_profile or None)
 
 
-def _setup_offline(ctx: click.Context, config_dir: Path, force: bool):
+def _setup_offline(ctx: click.Context, config_dir: Path):
     """オフラインモードセットアップ"""
     console.print("[yellow]オフラインモードでセットアップします[/yellow]")
     
@@ -323,11 +303,6 @@ def _setup_offline(ctx: click.Context, config_dir: Path, force: bool):
             'cache': str(config_dir / 'cache'),
             'logs': str(config_dir / 'logs')
         },
-        'features': {
-            'aws_integration': False,
-            'tui_enabled': True,
-            'interactive_enabled': True
-        },
         'defaults': {
             'timeout_seconds': 3600,
             'max_concurrent_jobs': 5,
@@ -342,7 +317,7 @@ def _setup_offline(ctx: click.Context, config_dir: Path, force: bool):
 
 
 def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str], 
-               profile: Optional[str], force: bool):
+               profile: Optional[str]):
     """AWS開発モードセットアップ"""
     console.print("[blue]AWS開発モードでセットアップします[/blue]")
     
@@ -353,7 +328,7 @@ def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str],
     if not _validate_aws_credentials(region, profile):
         console.print("[red]AWS認証情報が見つかりません。先にAWS CLIを設定してください[/red]")
         console.print("[yellow]オフラインモードで続行します[/yellow]")
-        _setup_offline(ctx, config_dir, force)
+        _setup_offline(ctx, config_dir)
         return
     
     # AWSリソースの自動作成
@@ -376,11 +351,6 @@ def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str],
             'data': str(config_dir / 'data'),
             'cache': str(config_dir / 'cache'),
             'logs': str(config_dir / 'logs')
-        },
-        'features': {
-            'aws_integration': True,
-            'tui_enabled': True,
-            'interactive_enabled': True
         },
         'defaults': {
             'timeout_seconds': 3600,
@@ -436,7 +406,7 @@ def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str],
 
 
 def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str], 
-                     profile: Optional[str], force: bool):
+                     profile: Optional[str]):
     """本番モードセットアップ"""
     console.print("[red]本番モードでセットアップします[/red]")
     
@@ -467,11 +437,6 @@ def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str
             'data': str(config_dir / 'data'),
             'cache': str(config_dir / 'cache'),
             'logs': str(config_dir / 'logs')
-        },
-        'features': {
-            'aws_integration': True,
-            'tui_enabled': True,
-            'interactive_enabled': True
         },
         'defaults': {
             'timeout_seconds': 7200,
@@ -531,26 +496,6 @@ def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str
         console.print("[red]重要: 本番環境のAWSリソースとIAM設定を確認してください[/red]")
 
 
-def _setup_samples_only(ctx: click.Context):
-    """サンプルファイルのみセットアップ"""
-    console.print("[cyan]サンプルファイルのセットアップを開始します[/cyan]")
-    
-    current_dir = Path.cwd()
-    tutorial_dir = current_dir / 'tutorial'
-    
-    if tutorial_dir.exists() and not Confirm.ask("tutorialディレクトリが既に存在します。上書きしますか？"):
-        console.print("[yellow]サンプルファイルのセットアップがキャンセルされました[/yellow]")
-        return
-    
-    # チュートリアルディレクトリの作成
-    tutorial_dir.mkdir(exist_ok=True)
-    
-    # サンプルファイルをコピー
-    _create_sample_files(tutorial_dir)
-    
-    console.print(f"[green]✓ サンプルファイルが {tutorial_dir} に配置されました[/green]")
-
-
 def _create_directories(config_dir: Path):
     """必要なディレクトリを作成"""
     directories = [
@@ -569,6 +514,7 @@ def _save_config(config_dir: Path, config_data: dict):
     """設定ファイルを保存"""
     config_file = config_dir / 'config' / 'config.yaml'
     
+
 
     # YAML互換性のため、Pythonオブジェクトを文字列に変換
     def convert_for_yaml(obj):
@@ -918,117 +864,4 @@ def _create_aws_resources(region: Optional[str], profile: Optional[str], is_prod
     except Exception as e:
         console.print(f"[red]AWSリソースの作成中にエラーが発生しました: {str(e)}[/red]")
         console.print("[yellow]手動でリソースを作成してください[/yellow]")
-        return None
-
-
-@init.command()
-@click.option('--check-config', is_flag=True, help='設定の妥当性をチェック')
-@click.option('--check-aws', is_flag=True, help='AWS接続をチェック')
-@click.option('--check-samples', is_flag=True, help='サンプルファイルをチェック')
-@click.pass_context 
-def validate(ctx: click.Context, check_config: bool, check_aws: bool, check_samples: bool):
-    """初期化後の設定を検証"""
-    
-    if not any([check_config, check_aws, check_samples]):
-        # 全てのチェックを実行
-        check_config = check_aws = check_samples = True
-    
-    results = []
-    
-    if check_config:
-        result = _validate_config()
-        results.append(("設定ファイル", result))
-    
-    if check_aws:
-        result = _validate_aws_setup()
-        results.append(("AWS接続", result))
-    
-    if check_samples:
-        result = _validate_samples()
-        results.append(("サンプルファイル", result))
-    
-    # 結果を表示
-    table = Table(title="検証結果", box=box.ROUNDED)
-    table.add_column("項目", style="cyan")
-    table.add_column("状態", style="bold")
-    table.add_column("詳細")
-    
-    for item, (status, message) in results:
-        status_color = "green" if status else "red"
-        status_text = "✓ OK" if status else "✗ NG"
-        table.add_row(item, f"[{status_color}]{status_text}[/{status_color}]", message)
-    
-    console.print(table)
-
-
-def _validate_config() -> tuple[bool, str]:
-    """設定ファイルを検証"""
-    config_file = Path.home() / '.bunsui' / 'config' / 'config.yaml'
-    if not config_file.exists():
-        return False, "設定ファイルが見つかりません"
-    
-    try:
-        with open(config_file, 'r') as f:
-            yaml.safe_load(f)
-        return True, "設定ファイルは正常です"
-    except Exception as e:
-        return False, f"設定ファイルにエラー: {str(e)}"
-
-
-def _validate_aws_setup() -> tuple[bool, str]:
-    """AWS設定を検証"""
-    try:
-        import boto3
-        sts = boto3.client('sts')
-        identity = sts.get_caller_identity()
-        return True, f"認証済み: {identity.get('Arn', 'unknown')}"
-    except Exception as e:
-        return False, f"AWS接続エラー: {str(e)}"
-
-
-def _validate_samples() -> tuple[bool, str]:
-    """サンプルファイルを検証"""
-    samples_dir = Path.home() / '.bunsui' / 'samples'
-    if not samples_dir.exists():
-        return False, "サンプルディレクトリが見つかりません"
-    
-    required_files = ['simple_pipeline.yaml', 'sample_pipeline.yaml']
-    missing_files = [f for f in required_files if not (samples_dir / f).exists()]
-    
-    if missing_files:
-        return False, f"不足ファイル: {', '.join(missing_files)}"
-    
-    return True, "サンプルファイルは正常です"
-
-
-@init.command()
-@click.option('--config-only', is_flag=True, help='設定のみリセット')
-@click.option('--samples-only', is_flag=True, help='サンプルファイルのみリセット')
-@click.option('--force', is_flag=True, help='確認なしでリセット')
-@click.pass_context
-def reset(ctx: click.Context, config_only: bool, samples_only: bool, force: bool):
-    """初期化設定をリセット"""
-    
-    if not force:
-        if not Confirm.ask("初期化設定をリセットしますか？この操作は元に戻せません。"):
-            console.print("[yellow]リセットがキャンセルされました[/yellow]")
-            return
-    
-    config_dir = Path.home() / '.bunsui'
-    
-    if config_only or not samples_only:
-        # 設定をリセット
-        config_file = config_dir / 'config' / 'config.yaml'
-        if config_file.exists():
-            config_file.unlink()
-            console.print("[green]✓ 設定ファイルをリセットしました[/green]")
-    
-    if samples_only or not config_only:
-        # サンプルファイルをリセット
-        samples_dir = config_dir / 'samples'
-        if samples_dir.exists():
-            import shutil
-            shutil.rmtree(samples_dir)
-            console.print("[green]✓ サンプルファイルをリセットしました[/green]")
-    
-    console.print("[blue]リセットが完了しました。必要に応じて bunsui init setup を再実行してください[/blue]") 
+        return None 

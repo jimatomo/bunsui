@@ -5,10 +5,37 @@ This module contains configuration models for AWS integration,
 pipeline settings, and general application configuration.
 """
 
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel, Field, validator
 from pathlib import Path
 import os
+
+
+def resolve_path(path: Union[str, Path], config_file_path: Optional[Path] = None) -> Path:
+    """
+    パスを解決する
+    
+    Args:
+        path: 解決するパス
+        config_file_path: 設定ファイルのパス（相対パス解決の基準）
+        
+    Returns:
+        解決されたパス
+    """
+    path_obj = Path(path)
+    
+    # 絶対パスの場合はそのまま返す
+    if path_obj.is_absolute():
+        return path_obj
+    
+    # 相対パスの場合
+    if config_file_path:
+        # 設定ファイルの親ディレクトリを基準に解決
+        base_dir = config_file_path.parent
+        return (base_dir / path_obj).resolve()
+    else:
+        # カレントディレクトリを基準に解決
+        return Path.cwd() / path_obj
 
 
 class AWSConfig(BaseModel):
@@ -229,8 +256,39 @@ class SecurityConfig(BaseModel):
         env_prefix = 'BUNSUI_SECURITY_'
 
 
+class ProjectConfig(BaseModel):
+    """Project-specific configuration."""
+    
+    name: str = Field(description="Project name")
+    description: Optional[str] = Field(None, description="Project description")
+    version: str = Field(default="1.0.0", description="Project version")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    
+    # プロジェクト固有の設定
+    base_dir: Optional[Path] = Field(
+        None,
+        description="Base directory for relative paths (defaults to config file directory)"
+    )
+    
+    # 継承設定
+    extends: Optional[str] = Field(
+        None,
+        description="Base configuration file to extend from"
+    )
+    
+    class Config:
+        """Pydantic configuration."""
+        env_prefix = 'BUNSUI_PROJECT_'
+
+
 class BunsuiConfig(BaseModel):
     """Main Bunsui configuration."""
+    
+    # Project configuration (optional)
+    project: Optional[ProjectConfig] = Field(
+        None,
+        description="Project-specific configuration"
+    )
     
     # Sub-configurations
     aws: AWSConfig = Field(
@@ -260,7 +318,7 @@ class BunsuiConfig(BaseModel):
         description="Enable debug mode"
     )
     
-    # Storage paths
+    # Storage paths (support relative paths)
     data_dir: Path = Field(
         default_factory=lambda: Path.home() / '.bunsui' / 'data',
         description="Local data directory"
@@ -274,6 +332,9 @@ class BunsuiConfig(BaseModel):
         description="Cache directory"
     )
     
+    # Configuration file tracking
+    config_file_path: Optional[Path] = Field(None, exclude=True)  # Internal field
+    
     @validator('environment')
     def validate_environment(cls, v):
         """Validate environment."""
@@ -281,6 +342,62 @@ class BunsuiConfig(BaseModel):
         if v not in valid_environments:
             raise ValueError(f"Invalid environment: {v}")
         return v
+    
+    def __init__(self, **data):
+        """Initialize configuration with path resolution."""
+        super().__init__(**data)
+        
+        # 設定ファイルパスが設定されている場合、相対パスを解決
+        if hasattr(self, 'config_file_path') and self.config_file_path:
+            self._resolve_paths()
+    
+    def _resolve_paths(self) -> None:
+        """Resolve relative paths based on configuration file location."""
+        if not self.config_file_path:
+            return
+        
+        # パスフィールドを解決
+        self.data_dir = resolve_path(self.data_dir, self.config_file_path)
+        self.config_dir = resolve_path(self.config_dir, self.config_file_path)
+        self.cache_dir = resolve_path(self.cache_dir, self.config_file_path)
+        
+        # ログファイルパスも解決
+        if self.logging.log_file_path:
+            self.logging.log_file_path = resolve_path(
+                self.logging.log_file_path, 
+                self.config_file_path
+            )
+    
+    def set_config_file_path(self, config_file_path: Path) -> None:
+        """Set configuration file path for relative path resolution."""
+        self.config_file_path = config_file_path
+        # 既存のパスを再解決
+        self.data_dir = resolve_path(self.data_dir, config_file_path)
+        self.config_dir = resolve_path(self.config_dir, config_file_path)
+        self.cache_dir = resolve_path(self.cache_dir, config_file_path)
+        
+        if self.logging.log_file_path:
+            self.logging.log_file_path = resolve_path(
+                self.logging.log_file_path, 
+                config_file_path
+            )
+    
+    def get_project_root(self) -> Optional[Path]:
+        """Get project root directory."""
+        if self.project and self.project.base_dir:
+            return self.project.base_dir
+        elif self.config_file_path:
+            return self.config_file_path.parent
+        else:
+            return None
+    
+    def resolve_project_path(self, relative_path: Union[str, Path]) -> Path:
+        """Resolve path relative to project root."""
+        project_root = self.get_project_root()
+        if project_root:
+            return project_root / relative_path
+        else:
+            return Path.cwd() / relative_path
     
     def create_directories(self) -> None:
         """Create necessary directories."""
@@ -304,7 +421,13 @@ class BunsuiConfig(BaseModel):
             else:
                 raise ValueError(f"Unsupported configuration file format: {file_path.suffix}")
         
-        return cls(**data)
+        # 設定ファイルパスを設定
+        data['config_file_path'] = file_path
+        
+        config = cls(**data)
+        config.set_config_file_path(file_path)
+        
+        return config
     
     def to_file(self, file_path: Path) -> None:
         """Save configuration to file."""
@@ -313,7 +436,8 @@ class BunsuiConfig(BaseModel):
         
         file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        data = self.dict(exclude_unset=True)
+        # 内部フィールドを除外してエクスポート（Pydantic V2対応）
+        data = self.model_dump(exclude={'config_file_path'}, exclude_unset=True)
         
         with open(file_path, 'w') as f:
             if file_path.suffix in ['.yaml', '.yml']:
