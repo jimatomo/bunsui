@@ -1214,6 +1214,9 @@ def get_config_info() -> Dict[str, Any]:
     """
     manager = get_config_manager()
     
+    # 設定を確実に読み込む
+    manager.config
+    
     return {
         'loaded_config_file': str(manager.loaded_config_file) if manager.loaded_config_file else None,
         'search_paths': [str(path) for path in manager.get_config_search_paths()],

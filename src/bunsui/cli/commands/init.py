@@ -477,7 +477,7 @@ def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str],
         
         # 失敗したリソースがある場合の警告
         expected_tables = 3
-        expected_buckets = 3
+        expected_buckets = 1
         actual_tables = len(created_resources['tables'])
         actual_buckets = len(created_resources['buckets'])
         
@@ -565,7 +565,7 @@ def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str
         
         # 失敗したリソースがある場合の警告
         expected_tables = 3
-        expected_buckets = 3
+        expected_buckets = 1
         actual_tables = len(created_resources['tables'])
         actual_buckets = len(created_resources['buckets'])
         
@@ -831,6 +831,18 @@ bunsui pipeline create --file simple_pipeline.yaml --dry-run
 bunsui pipeline create --file simple_pipeline.yaml --name "My Pipeline"
 ```
 
+## S3バケット構造
+
+Bunsuiは一つのS3バケットを使用し、プレフィックスでデータを整理します：
+
+```
+s3://{prefix}-storage-{random_suffix}/
+├── data/          # データファイル
+├── logs/          # ログファイル
+├── reports/       # レポートファイル
+└── configs/       # 設定ファイル
+```
+
 ## 注意事項
 
 - サンプルファイル内のAWSリソース（Lambda関数、S3バケットなど）は架空のものです
@@ -917,34 +929,41 @@ def _create_aws_resources(region: Optional[str], profile: Optional[str], is_prod
                 else:
                     console.print(f"[red]  ✗ {full_table_name} の作成に失敗: {str(e)}[/red]")
         
-        # S3バケットの作成（ランダム文字列付き）
+        # S3バケットの作成（一つのバケットにプレフィックスで分ける）
         console.print("[dim]🪣 S3バケットを作成中...[/dim]")
         s3_client = S3Client(region_name)
         
-        bucket_types = ["data", "logs", "reports"]
+        # 一つのバケットを作成
+        bucket_name = f"{prefix}-storage-{random_suffix}"
         created_buckets = {}
         
-        for bucket_type in bucket_types:
-            try:
-                # ランダム文字列付きのバケット名
-                bucket_name = f"{prefix}-{bucket_type}-{random_suffix}"
-                
-                console.print(f"[dim]  - {bucket_name}[/dim]")
-                s3_client.create_bucket(bucket_name, region_name)
-                created_buckets[bucket_type] = bucket_name
-                console.print(f"[green]  ✓ {bucket_name} を作成しました[/green]")
-            except Exception as e:
-                if "already exists" in str(e).lower() or "already owned by you" in str(e).lower():
-                    console.print(f"[yellow]  ⚠ {bucket_name} は既に存在します[/yellow]")
-                    created_buckets[bucket_type] = bucket_name
-                else:
-                    console.print(f"[red]  ✗ {bucket_name} の作成に失敗: {str(e)}[/red]")
-                    # エラーが発生した場合は、そのバケットをスキップ
-                    continue
+        try:
+            console.print(f"[dim]  - {bucket_name}[/dim]")
+            s3_client.create_bucket(bucket_name, region_name)
+            created_buckets["storage"] = bucket_name
+            console.print(f"[green]  ✓ {bucket_name} を作成しました[/green]")
+            
+            # プレフィックス構造を作成（フォルダ構造として）
+            prefixes = ["data/", "logs/", "reports/", "configs/"]
+            for prefix_path in prefixes:
+                # S3では空のオブジェクトを作成することでフォルダ構造を表現
+                try:
+                    s3_client.put_object(bucket_name, prefix_path, "")
+                    console.print(f"[dim]    - プレフィックス {prefix_path} を作成[/dim]")
+                except Exception as e:
+                    console.print(f"[yellow]    ⚠ プレフィックス {prefix_path} の作成に失敗: {str(e)}[/yellow]")
+                    
+        except Exception as e:
+            if "already exists" in str(e).lower() or "already owned by you" in str(e).lower():
+                console.print(f"[yellow]  ⚠ {bucket_name} は既に存在します[/yellow]")
+                created_buckets["storage"] = bucket_name
+            else:
+                console.print(f"[red]  ✗ {bucket_name} の作成に失敗: {str(e)}[/red]")
+                # エラーが発生した場合は、バケット作成をスキップ
         
         # 作成結果の確認
         success_count = len(created_tables) + len(created_buckets)
-        total_count = 3 + 3  # テーブル3つ + バケット3つ
+        total_count = 3 + 1  # テーブル3つ + バケット1つ
         
         if success_count == total_count:
             console.print("[green]✓ AWSリソースの作成が完了しました[/green]")

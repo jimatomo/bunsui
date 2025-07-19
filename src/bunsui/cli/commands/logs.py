@@ -39,7 +39,7 @@ def get_log_service() -> LogService:
         )
         
         s3_storage = S3StorageManager(
-            bucket_name=f"{aws_config.s3_bucket_prefix}-data",
+            bucket_name=f"{aws_config.s3_bucket_prefix}-storage",
             region=aws_config.region
         )
         
