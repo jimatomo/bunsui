@@ -244,31 +244,41 @@ class SessionRepository:
             SessionError: If session listing fails
         """
         try:
-            # Build query/scan parameters
-            kwargs = {
-                'Limit': limit,
-                'ScanIndexForward': False  # Sort by created_at descending
-            }
-            
             # Use GSI if filtering by pipeline_id
             if pipeline_id:
-                kwargs['IndexName'] = 'pipeline_id-created_at-index'
-                kwargs['KeyConditionExpression'] = Key('pipeline_id').eq(pipeline_id)
+                # Build query parameters
+                kwargs: Dict[str, Any] = {
+                    'Limit': limit,
+                    'ScanIndexForward': False,  # Sort by created_at descending
+                    'IndexName': 'pipeline_id-created_at-index',
+                    'KeyConditionExpression': 'pipeline_id = :pipeline_id',
+                    'ExpressionAttributeValues': {
+                        ':pipeline_id': pipeline_id
+                    }
+                }
                 
                 if status:
-                    kwargs['FilterExpression'] = Attr('status').eq(status.value)
+                    kwargs['FilterExpression'] = '#status = :status'
+                    kwargs['ExpressionAttributeNames'] = {'#status': 'status'}
+                    kwargs['ExpressionAttributeValues'][':status'] = status.value
                 
                 if self.table is None:
                     raise SessionError("DynamoDB table not initialized")
                 response = self.table.query(**kwargs)
             else:
                 # Use scan for general listing
+                scan_kwargs: Dict[str, Any] = {
+                    'Limit': limit
+                }
+                
                 if status:
-                    kwargs['FilterExpression'] = Attr('status').eq(status.value)
+                    scan_kwargs['FilterExpression'] = '#status = :status'
+                    scan_kwargs['ExpressionAttributeNames'] = {'#status': 'status'}
+                    scan_kwargs['ExpressionAttributeValues'] = {':status': status.value}
                 
                 if self.table is None:
                     raise SessionError("DynamoDB table not initialized")
-                response = self.table.scan(**kwargs)
+                response = self.table.scan(**scan_kwargs)
             
             # Convert items to session metadata
             sessions = []
