@@ -52,7 +52,7 @@ class DSLSchema:
                 "version": SchemaProperty(
                     type=SchemaType.STRING,
                     description="Pipeline version",
-                    enum=["1.0", "1.1"],
+                    enum=["1.0"],
                     required=True
                 ),
                 "name": SchemaProperty(
@@ -329,7 +329,7 @@ class DSLSchema:
     
     def get_schema_for_version(self, version: str) -> SchemaProperty:
         """バージョンに対応するスキーマを取得"""
-        if version not in ["1.0", "1.1"]:
+        if version not in ["1.0"]:
             raise ValueError(f"Unsupported version: {version}")
         
         return self.pipeline_schema

@@ -201,24 +201,24 @@ def init(ctx: click.Context):
 
 def _handle_main_setup(ctx: click.Context):
     """メインの初期化処理"""
-    # 設定ディレクトリの決定（デフォルト: ~/.bunsui）
-    base_config_dir = Path.home() / '.bunsui'
+    # 設定ディレクトリの選択
+    config_dir = _select_config_directory()
     
     console.print(Panel.fit(
         "[bold blue]Bunsui 初期化ウィザード[/bold blue]\n"
         f"モード: インタラクティブ\n"
-        f"設定ディレクトリ: {base_config_dir}",
+        f"設定ディレクトリ: {config_dir}",
         title="🚀 Bunsui Setup"
     ))
     
     # 既存設定のチェック（force=Falseで確認）
-    if _check_existing_setup(base_config_dir):
+    if _check_existing_setup(config_dir):
         if not Confirm.ask("既存の設定が見つかりました。続行しますか？"):
             console.print("[yellow]初期化がキャンセルされました[/yellow]")
             return
     
     # モード別の初期化実行
-    _setup_interactive(ctx, base_config_dir)
+    _setup_interactive(ctx, config_dir)
     
     console.print(Panel.fit(
         "[bold green]✅ 初期化が完了しました！[/bold green]\n\n"
@@ -229,6 +229,93 @@ def _handle_main_setup(ctx: click.Context):
         "4. 診断を実行: [bold]bunsui doctor[/bold]",
         title="🎉 セットアップ完了"
     ))
+
+
+def _select_config_directory() -> Path:
+    """設定ディレクトリを選択"""
+    from ...core.config.manager import find_config_files
+    
+    # 設定ファイルの検索順序を取得
+    config_files = find_config_files()
+    
+    # ユーザーが選択できるディレクトリオプションを作成
+    directory_options = []
+    descriptions = []
+    
+    # 1. 現在ディレクトリ
+    current_dir = Path.cwd() / '.bunsui'
+    directory_options.append("現在のディレクトリ")
+    descriptions.append("最優先（プロジェクト固有の設定）")
+    
+    # 2. プロジェクトルート
+    project_root = _find_project_root()
+    if project_root and project_root != Path.cwd():
+        project_dir = project_root / '.bunsui'
+        directory_options.append("プロジェクトルート")
+        descriptions.append("プロジェクト全体の設定")
+    
+    # 3. ホームディレクトリ
+    home_dir = Path.home() / '.bunsui'
+    directory_options.append("ホームディレクトリ")
+    descriptions.append("グローバル設定（ユーザー全体）")
+    
+    # 4. カスタムディレクトリ
+    directory_options.append("カスタムディレクトリ")
+    descriptions.append("任意のディレクトリを指定")
+    
+    # InteractiveSelectorを使って選択（モード選択と同じ方法）
+    selected = selector.select_with_arrow_keys(
+        "設定ディレクトリを選択してください",
+        directory_options,
+        descriptions,
+        default="現在のディレクトリ"
+    )
+    
+    if selected == "現在のディレクトリ":
+        return current_dir
+    elif selected == "プロジェクトルート":
+        return project_dir
+    elif selected == "ホームディレクトリ":
+        return home_dir
+    elif selected == "カスタムディレクトリ":
+        # カスタムディレクトリの入力
+        custom_path = Prompt.ask("ディレクトリパスを入力してください")
+        if custom_path:
+            custom_dir = Path(custom_path)
+            if Confirm.ask(f"ディレクトリ '{custom_dir}' を作成しますか？"):
+                custom_dir.mkdir(parents=True, exist_ok=True)
+            return custom_dir
+        else:
+            console.print("[red]パスが入力されていません[/red]")
+            raise click.Abort()
+    else:
+        # フォールバック
+        return current_dir
+
+
+def _find_project_root() -> Optional[Path]:
+    """プロジェクトルートを検索"""
+    current = Path.cwd()
+    
+    # ファイルシステムのルートまで遡る
+    for parent in [current] + list(current.parents):
+        # Git リポジトリの場合
+        if (parent / '.git').exists():
+            return parent
+        # pyproject.toml がある場合
+        if (parent / 'pyproject.toml').exists():
+            return parent
+        # setup.py がある場合
+        if (parent / 'setup.py').exists():
+            return parent
+        # package.json がある場合（Node.js プロジェクト）
+        if (parent / 'package.json').exists():
+            return parent
+        # Bunsui 設定ディレクトリがある場合
+        if (parent / '.bunsui').exists():
+            return parent
+    
+    return None
 
 
 def _check_existing_setup(config_dir: Path) -> bool:
@@ -498,11 +585,18 @@ def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str
 
 def _create_directories(config_dir: Path):
     """必要なディレクトリを作成"""
+    # 設定ディレクトリが.bunsuiで終わっている場合は、そのまま使用
+    # そうでなければ、.bunsuiサブディレクトリを作成
+    if config_dir.name == '.bunsui':
+        base_dir = config_dir
+    else:
+        base_dir = config_dir / '.bunsui'
+    
     directories = [
-        config_dir / 'config',
-        config_dir / 'data',
-        config_dir / 'cache', 
-        config_dir / 'logs'
+        base_dir / 'config',
+        base_dir / 'data',
+        base_dir / 'cache', 
+        base_dir / 'logs'
     ]
     
     for dir_path in directories:
@@ -512,10 +606,16 @@ def _create_directories(config_dir: Path):
 
 def _save_config(config_dir: Path, config_data: dict):
     """設定ファイルを保存"""
-    config_file = config_dir / 'config' / 'config.yaml'
+    # 設定ディレクトリが.bunsuiで終わっている場合は、そのまま使用
+    # そうでなければ、.bunsuiサブディレクトリを作成
+    if config_dir.name == '.bunsui':
+        config_file = config_dir / 'config.yaml'
+    else:
+        config_file = config_dir / '.bunsui' / 'config.yaml'
     
-
-
+    # ディレクトリを作成
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    
     # YAML互換性のため、Pythonオブジェクトを文字列に変換
     def convert_for_yaml(obj):
         """YAML互換性のためオブジェクトを変換"""
@@ -544,8 +644,14 @@ def _save_config(config_dir: Path, config_data: dict):
 
 def _setup_sample_files(config_dir: Path):
     """サンプルファイルをセットアップ"""
-    samples_dir = config_dir / 'samples'
-    samples_dir.mkdir(exist_ok=True)
+    # 設定ディレクトリが.bunsuiで終わっている場合は、そのまま使用
+    # そうでなければ、.bunsuiサブディレクトリを作成
+    if config_dir.name == '.bunsui':
+        samples_dir = config_dir / 'samples'
+    else:
+        samples_dir = config_dir / '.bunsui' / 'samples'
+    
+    samples_dir.mkdir(parents=True, exist_ok=True)
     
     _create_sample_files(samples_dir)
     console.print(f"[green]✓ サンプルファイルを配置しました: {samples_dir}[/green]")

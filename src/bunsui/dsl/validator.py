@@ -54,7 +54,7 @@ class DSLValidator:
         if not pipeline.jobs:
             errors.append("At least one job is required")
         
-        if pipeline.version not in ["1.0", "1.1"]:
+        if pipeline.version not in ["1.0"]:
             errors.append(f"Unsupported pipeline version: {pipeline.version}")
         
         return errors

@@ -72,7 +72,7 @@ class DSLParser:
     """パイプライン定義DSLのパーサー"""
     
     def __init__(self):
-        self.supported_versions = ["1.0", "1.1"]
+        self.supported_versions = ["1.0"]
         self.variable_pattern = re.compile(r'\$\{([^}]+)\}')
     
     def parse_file(self, file_path: str) -> Pipeline:

@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 from rich.prompt import Confirm
+from rich.text import Text
 import json
 import yaml
 from pathlib import Path
@@ -117,22 +118,25 @@ def delete(ctx: click.Context, key: str):
               default='table', help='出力形式')
 @click.option('--verbose', '-v', is_flag=True, help='詳細表示（すべての設定項目を表示）')
 @click.option('--show-defaults', is_flag=True, help='デフォルト値も表示')
+@click.option('--check-version', is_flag=True, help='バージョンの整合性をチェック')
 @click.pass_context
-def list(ctx: click.Context, scope: str, format: str, verbose: bool, show_defaults: bool):
-    """設定一覧を表示"""
+def list(ctx: click.Context, scope: str, format: str, verbose: bool, show_defaults: bool, check_version: bool):
+    """設定を表示"""
     try:
-        if scope == 'all':
-            # すべての設定情報を表示
-            _display_all_configs(format, verbose, show_defaults)
+        if check_version:
+            _check_config_versions()
+            return
+            
+        if format == 'table':
+            if verbose:
+                _display_all_configs(format, verbose, show_defaults)
+            else:
+                _display_scope_config(scope, format, verbose, show_defaults)
         else:
-            # 特定のスコープの設定を表示
             _display_scope_config(scope, format, verbose, show_defaults)
             
-    except ConfigurationError as e:
-        console.print(f"[red]設定エラー: {e}[/red]")
-        raise click.Abort()
     except Exception as e:
-        console.print(f"[red]設定エラー: {e}[/red]")
+        console.print(f"[red]設定の表示中にエラーが発生しました: {e}[/red]")
         raise click.Abort()
 
 
@@ -451,29 +455,41 @@ def _convert_value(value: str):
 
 def _display_all_configs(format: str, verbose: bool = False, show_defaults: bool = False):
     """すべての設定を表示"""
-    config_manager = get_config_manager()
+    from pathlib import Path
+    import yaml
+    import json
     
-    # 設定ファイルの読み込みを強制的に行う
-    config_manager.load_config()
+    # 設定ファイルの検索パス
+    config_paths = [
+        Path.cwd() / '.bunsui' / 'config.yaml',
+        Path.home() / '.bunsui' / 'config' / 'config.yaml',
+        Path('/etc/bunsui/config.yaml')
+    ]
     
-    # 実際の設定ファイルから読み込む
-    if config_manager.loaded_config_file and config_manager.loaded_config_file.exists():
+    # 最初に見つかった設定ファイルを使用
+    config_file = None
+    for path in config_paths:
+        if path.exists():
+            config_file = path
+            break
+    
+    if config_file:
         # 設定ファイルが存在する場合、ファイルから直接読み込み
-        import yaml
-        import json
-        
-        with open(config_manager.loaded_config_file, 'r', encoding='utf-8') as f:
-            if config_manager.loaded_config_file.suffix in ['.yaml', '.yml']:
-                config_data = yaml.safe_load(f) or {}
-            else:
-                config_data = json.load(f)
-        
-        # 設定ファイルのパスを表示
-        console.print(f"[dim]📁 設定ファイル: {config_manager.loaded_config_file}[/dim]")
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                if config_file.suffix in ['.yaml', '.yml']:
+                    config_data = yaml.safe_load(f) or {}
+                else:
+                    config_data = json.load(f)
+            
+            # 設定ファイルのパスを表示
+            console.print(f"[dim]📁 設定ファイル: {config_file}[/dim]")
+        except Exception as e:
+            console.print(f"[red]設定ファイル読み込みエラー: {e}[/red]")
+            return
     else:
         # 設定ファイルが存在しない場合、デフォルト設定を使用
-        config = config_manager.config
-        config_data = config.model_dump()
+        config_data = _get_default_config_dict()
         console.print("[dim]📁 設定ファイル: デフォルト設定を使用[/dim]")
     
     if format == 'table':
@@ -484,8 +500,130 @@ def _display_all_configs(format: str, verbose: bool = False, show_defaults: bool
         console.print(yaml.dump(config_data, default_flow_style=False))
 
 
+def _check_config_versions():
+    """設定ファイルのバージョン整合性をチェック"""
+    from pathlib import Path
+    from rich.table import Table
+    from rich.console import Console
+    
+    console = Console()
+    
+    # サポートされているバージョン
+    SUPPORTED_VERSIONS = ["1.0.0"]
+    RECOMMENDED_VERSION = "1.0.0"
+    
+    # 設定ファイルの検索パス
+    config_paths = [
+        Path.cwd() / '.bunsui' / 'config.yaml',
+        Path.home() / '.bunsui' / 'config' / 'config.yaml',
+        Path('/etc/bunsui/config.yaml')
+    ]
+    
+    table = Table(title="設定ファイルバージョンチェック", box=box.ROUNDED)
+    table.add_column("ファイル", style="white", min_width=30)
+    table.add_column("バージョン", style="white", min_width=10)
+    table.add_column("状態", style="white", min_width=15)
+    table.add_column("推奨", style="white", min_width=10)
+    
+    found_files = []
+    
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                import yaml
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = yaml.safe_load(f)
+                
+                version = config_data.get('version', '未設定')
+                found_files.append((config_path, version))
+                
+                # バージョンの状態を判定
+                if version == '未設定':
+                    status = "[red]バージョン未設定[/red]"
+                    recommended = RECOMMENDED_VERSION
+                elif version in SUPPORTED_VERSIONS:
+                    if version == RECOMMENDED_VERSION:
+                        status = "[green]✓ 推奨バージョン[/green]"
+                    else:
+                        status = "[yellow]⚠ サポート済み[/yellow]"
+                    recommended = RECOMMENDED_VERSION
+                else:
+                    status = "[red]✗ 非サポート[/red]"
+                    recommended = RECOMMENDED_VERSION
+                
+                table.add_row(
+                    str(config_path),
+                    version,
+                    status,
+                    recommended
+                )
+                
+            except Exception as e:
+                table.add_row(
+                    str(config_path),
+                    "エラー",
+                    f"[red]読み込み失敗: {e}[/red]",
+                    RECOMMENDED_VERSION
+                )
+    
+    if not found_files:
+        console.print("[yellow]設定ファイルが見つかりません[/yellow]")
+        console.print(f"[dim]推奨バージョン: {RECOMMENDED_VERSION}[/dim]")
+        return
+    
+    console.print(table)
+    
+    # サマリー情報
+    console.print(f"\n[bold]サポートされているバージョン:[/bold] {', '.join(SUPPORTED_VERSIONS)}")
+    console.print(f"[bold]推奨バージョン:[/bold] {RECOMMENDED_VERSION}")
+    
+    # 推奨バージョンでないファイルがある場合の警告
+    outdated_files = [f for f, v in found_files if v != RECOMMENDED_VERSION and v != '未設定']
+    if outdated_files:
+        console.print(f"\n[yellow]⚠ {len(outdated_files)}個のファイルが推奨バージョンと異なります[/yellow]")
+        console.print("[dim]バージョンを更新するには 'bunsui config migrate' を使用してください[/dim]")
+
+
+def find_project_root(start_path: Optional[Path] = None) -> Optional[Path]:
+    """
+    プロジェクトルートディレクトリを見つける
+    
+    Args:
+        start_path: 検索開始パス（デフォルト: 現在のディレクトリ）
+        
+    Returns:
+        プロジェクトルートパス（見つからない場合はNone）
+    """
+    current = start_path or Path.cwd()
+    
+    # ファイルシステムのルートまで遡る
+    for parent in [current] + list(current.parents):
+        # Git リポジトリの場合
+        if (parent / '.git').exists():
+            return parent
+        # pyproject.toml がある場合
+        if (parent / 'pyproject.toml').exists():
+            return parent
+        # setup.py がある場合
+        if (parent / 'setup.py').exists():
+            return parent
+        # package.json がある場合（Node.js プロジェクト）
+        if (parent / 'package.json').exists():
+            return parent
+        # Bunsui 設定ディレクトリがある場合
+        if (parent / '.bunsui').exists():
+            return parent
+    
+    return None
+
+
 def _display_scope_config(scope: str, format: str, verbose: bool = False, show_defaults: bool = False):
     """特定のスコープの設定を表示"""
+    if scope == 'all':
+        # すべてのスコープの設定を表示
+        _display_all_configs(format, verbose, show_defaults)
+        return
+    
     project_root = find_project_root()
     scope_files = {
         'local': Path.cwd() / '.bunsui' / 'config.yaml',
@@ -536,7 +674,7 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     # 重要な設定項目の定義
     important_keys = {
         '基本設定': ['mode', 'version', 'created_at'],
-        'AWS': ['aws.region', 'aws.profile', 'aws.dynamodb_table_prefix', 'aws.s3_bucket_prefix'],
+        'AWS': ['aws.region', 'aws.profile'],
         'パイプライン': ['defaults.timeout_seconds', 'defaults.max_concurrent_jobs', 'defaults.output_format'],
         'ディレクトリ': ['directories.data', 'directories.cache', 'directories.logs']
     }
@@ -551,6 +689,40 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             else:
                 return None
         return current
+    
+    def _get_version_status(version: str) -> str:
+        """バージョンの状態を取得"""
+        SUPPORTED_VERSIONS = ["1.0.0"]
+        RECOMMENDED_VERSION = "1.0.0"
+        
+        if version == RECOMMENDED_VERSION:
+            return "[green]✓ 推奨バージョン[/green]"
+        elif version in SUPPORTED_VERSIONS:
+            return "[yellow]⚠ サポート済み[/yellow]"
+        else:
+            return "[red]✗ 非サポート[/red]"
+    
+    # バージョン情報を特別に表示
+    version = get_nested_value(config_data, 'version')
+    if version and isinstance(version, str):
+        version_status = _get_version_status(version)
+        console.print(f"\n[bold cyan]📋 設定ファイルバージョン:[/bold cyan] {version} {version_status}")
+    
+    def get_default_value_for_key(key_path: str, default_config_data: dict):
+        """設定項目の名前をマッピングしてデフォルト値を取得"""
+        # 設定項目名のマッピング
+        key_mapping = {
+            'defaults.timeout_seconds': 'pipeline.default_timeout',
+            'defaults.max_concurrent_jobs': 'pipeline.max_concurrent_jobs',
+            'defaults.output_format': 'logging.level',  # 適切なデフォルト値がない場合
+            'directories.data': 'data_dir',
+            'directories.cache': 'cache_dir',
+            'directories.logs': 'cache_dir',  # logs_dirがない場合はcache_dirを使用
+        }
+        
+        # マッピングされたキーを使用してデフォルト値を取得
+        mapped_key = key_mapping.get(key_path, key_path)
+        return get_nested_value(default_config_data, mapped_key)
     
     def is_value_modified(key_path: str, current_value, default_value) -> bool:
         """値がデフォルトから変更されているかチェック"""
@@ -572,11 +744,45 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
         # その他は値で直接比較
         return current_value != default_value
     
+    def get_aws_resource_names(config_data: dict) -> dict:
+        """AWSリソースの実際の名前を取得"""
+        aws_config = config_data.get('aws', {})
+        created_resources = aws_config.get('created_resources', {})
+        
+        resource_names = {}
+        
+        # DynamoDBテーブル名
+        tables = created_resources.get('tables', {})
+        if tables:
+            table_list = []
+            for table_key, table_name in tables.items():
+                # テーブルキーから短縮名を取得
+                short_name = table_key.split('-')[-1] if '-' in table_key else table_key
+                table_list.append((short_name, table_name))
+            resource_names['dynamodb_tables'] = table_list
+        else:
+            # 作成されたリソースがない場合はprefixを表示
+            prefix = aws_config.get('dynamodb_table_prefix', 'bunsui')
+            resource_names['dynamodb_tables'] = [("prefix", f"{prefix}-*")]
+        
+        # S3バケット名
+        buckets = created_resources.get('buckets', {})
+        if buckets:
+            bucket_list = []
+            for bucket_type, bucket_name in buckets.items():
+                bucket_list.append((bucket_type, bucket_name))
+            resource_names['s3_buckets'] = bucket_list
+        else:
+            # 作成されたリソースがない場合はprefixを表示
+            prefix = aws_config.get('s3_bucket_prefix', 'bunsui')
+            resource_names['s3_buckets'] = [("prefix", f"{prefix}-*")]
+        
+        return resource_names
+    
     table = Table(title="Bunsui 設定サマリー", box=box.ROUNDED)
-    table.add_column("カテゴリ", style="cyan", min_width=12)
+    table.add_column("カテゴリ", style="white", min_width=12)
     table.add_column("設定項目", style="white", min_width=25)
     table.add_column("値", min_width=30)
-    table.add_column("状態", style="dim", min_width=8)
     
     modified_count = 0
     total_count = 0
@@ -585,7 +791,7 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
         first_in_category = True
         for key_path in keys:
             current_value = get_nested_value(config_data, key_path)
-            default_value = get_nested_value(default_config_data, key_path)
+            default_value = get_default_value_for_key(key_path, default_config_data)
             
             # デフォルト値を表示しない場合、Noneや空文字列はスキップ
             if not show_defaults and (current_value is None or current_value == ""):
@@ -597,21 +803,34 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             if any(secret in key_path.lower() for secret in ['password', 'secret', 'key', 'token']):
                 display_value = "****"
                 value_style = "red"
-                status = "機密"
             else:
                 display_value = str(current_value) if current_value is not None else "未設定"
                 if len(display_value) > 50:
                     display_value = display_value[:47] + "..."
                 
-                # デフォルト値と比較して色とステータスを決定
+                # デフォルト値と比較して色を決定
                 is_modified = is_value_modified(key_path, current_value, default_value)
-                if is_modified:
-                    value_style = "yellow"  # カスタマイズされた値は黄色
-                    status = "変更"
+                
+                # 色の決定ロジックを改善
+                if key_path == 'aws.region' and current_value == 'us-east-1':
+                    # AWSリージョンがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key_path == 'defaults.timeout_seconds' and current_value == '3600':
+                    # timeout_secondsがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key_path == 'defaults.max_concurrent_jobs' and current_value == '10':
+                    # max_concurrent_jobsがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key_path == 'defaults.output_format' and current_value == 'INFO':
+                    # output_formatがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif is_modified:
+                    # デフォルト値と異なる場合は黄色
+                    value_style = "yellow"
                     modified_count += 1
                 else:
-                    value_style = "green"   # デフォルト値は緑色
-                    status = "標準"
+                    # デフォルト値と同じ場合は緑色
+                    value_style = "green"
             
             # 設定項目名を短縮
             short_key = key_path.split('.')[-1]
@@ -620,10 +839,40 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             table.add_row(
                 category_display, 
                 short_key, 
-                f"[{value_style}]{display_value}[/{value_style}]",
-                status
+                Text(display_value, style=value_style)
             )
             first_in_category = False
+    
+    # AWSリソース情報を追加
+    aws_resources = get_aws_resource_names(config_data)
+    
+    # DynamoDBテーブル情報
+    if 'dynamodb_tables' in aws_resources:
+        first_dynamodb = True
+        for table_info in aws_resources['dynamodb_tables']:
+            category_display = "DynamoDB" if first_dynamodb else ""
+            table.add_row(
+                category_display,
+                table_info[0],
+                Text(table_info[1], style="cyan")
+            )
+            first_dynamodb = False
+            total_count += 1
+            modified_count += 1  # AWSリソースはカスタマイズ済みとしてカウント
+    
+    # S3バケット情報
+    if 's3_buckets' in aws_resources:
+        first_s3 = True
+        for bucket_info in aws_resources['s3_buckets']:
+            category_display = "S3" if first_s3 else ""
+            table.add_row(
+                category_display,
+                bucket_info[0],
+                Text(bucket_info[1], style="cyan")
+            )
+            first_s3 = False
+            total_count += 1
+            modified_count += 1  # AWSリソースはカスタマイズ済みとしてカウント
     
     console.print(table)
     
@@ -634,7 +883,7 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     
     # 凡例を表示
     console.print("\n[dim]🎨 凡例:[/dim]")
-    console.print("  [green]■[/green] 標準値  [yellow]■[/yellow] カスタマイズ済み  [red]■[/red] 機密情報")
+    console.print("  [green]■[/green] 標準値  [yellow]■[/yellow] カスタマイズ済み  [red]■[/red] 機密情報  [cyan]■[/cyan] AWSリソース")
     
     # 詳細表示の案内
     console.print("\n[dim]💡 すべての設定を表示するには --verbose オプションを使用してください[/dim]")
@@ -666,49 +915,203 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
     
     flat_config = _flatten_dict(config_data)
     
+    def get_nested_value(data: dict, key_path: str):
+        """ネストした辞書から値を取得"""
+        keys = key_path.split('.')
+        current = data
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return None
+        return current
+    
+    def get_default_value_for_key(key_path: str, default_config_data: dict):
+        """設定項目の名前をマッピングしてデフォルト値を取得"""
+        # 設定項目名のマッピング
+        key_mapping = {
+            'defaults.timeout_seconds': 'pipeline.default_timeout',
+            'defaults.max_concurrent_jobs': 'pipeline.max_concurrent_jobs',
+            'defaults.output_format': 'logging.level',  # 適切なデフォルト値がない場合
+            'directories.data': 'data_dir',
+            'directories.cache': 'cache_dir',
+            'directories.logs': 'cache_dir',  # logs_dirがない場合はcache_dirを使用
+        }
+        
+        # マッピングされたキーを使用してデフォルト値を取得
+        mapped_key = key_mapping.get(key_path, key_path)
+        return get_nested_value(default_config_data, mapped_key)
+    
+    def is_value_modified(key_path: str, current_value, default_value) -> bool:
+        """値がデフォルトから変更されているかチェック"""
+        # パス系の設定は特別扱い（絶対パス展開されるため）
+        if any(path_key in key_path for path_key in ['data_dir', 'config_dir', 'cache_dir']):
+            # パス系は名前で判定
+            if hasattr(current_value, 'name'):
+                current_name = current_value.name
+            else:
+                current_name = str(current_value).split('/')[-1] if current_value else ''
+                
+            if hasattr(default_value, 'name'):
+                default_name = default_value.name
+            else:
+                default_name = str(default_value).split('/')[-1] if default_value else ''
+                
+            return current_name != default_name
+        
+        # その他は値で直接比較
+        return current_value != default_value
+    
+    def get_aws_resource_names(config_data: dict) -> dict:
+        """AWSリソースの実際の名前を取得"""
+        aws_config = config_data.get('aws', {})
+        created_resources = aws_config.get('created_resources', {})
+        
+        resource_names = {}
+        
+        # DynamoDBテーブル名
+        tables = created_resources.get('tables', {})
+        if tables:
+            table_list = []
+            for table_key, table_name in tables.items():
+                # テーブルキーから短縮名を取得
+                short_name = table_key.split('-')[-1] if '-' in table_key else table_key
+                table_list.append((short_name, table_name))
+            resource_names['dynamodb_tables'] = table_list
+        else:
+            # 作成されたリソースがない場合はprefixを表示
+            prefix = aws_config.get('dynamodb_table_prefix', 'bunsui')
+            resource_names['dynamodb_tables'] = [("prefix", f"{prefix}-*")]
+        
+        # S3バケット名
+        buckets = created_resources.get('buckets', {})
+        if buckets:
+            bucket_list = []
+            for bucket_type, bucket_name in buckets.items():
+                bucket_list.append((bucket_type, bucket_name))
+            resource_names['s3_buckets'] = bucket_list
+        else:
+            # 作成されたリソースがない場合はprefixを表示
+            prefix = aws_config.get('s3_bucket_prefix', 'bunsui')
+            resource_names['s3_buckets'] = [("prefix", f"{prefix}-*")]
+        
+        return resource_names
+    
     table = Table(title="Bunsui 設定（詳細）", box=box.ROUNDED)
-    table.add_column("設定キー", style="cyan", min_width=35)
+    table.add_column("カテゴリ", style="white", min_width=12)
+    table.add_column("設定項目", style="white", min_width=35)
     table.add_column("値", min_width=30)
-    table.add_column("型", style="dim", min_width=10)
-    table.add_column("状態", style="dim", min_width=8)
     
     modified_count = 0
     total_count = 0
     
+    # カテゴリ別に設定を整理
+    categorized_config = {}
     for key, value in sorted(flat_config.items()):
         # デフォルト値を表示しない場合、空の値をスキップ
         if not show_defaults and (value is None or value == "" or 
                                  (hasattr(value, '__len__') and len(value) == 0)):
             continue
         
-        total_count += 1
-        default_value = default_flat.get(key)
-        
-        # 機密情報を隠す
-        if any(secret in key.lower() for secret in ['password', 'secret', 'key', 'token']):
-            display_value = "****"
-            value_style = "red"
-            status = "機密"
+        # カテゴリを決定
+        if key.startswith('aws.'):
+            category = 'AWS'
+        elif key.startswith('pipeline.'):
+            category = 'パイプライン'
+        elif key.startswith('logging.'):
+            category = 'ログ'
+        elif key.startswith('security.'):
+            category = 'セキュリティ'
+        elif key.startswith('directories.'):
+            category = 'ディレクトリ'
+        elif key in ['mode', 'version', 'created_at', 'environment', 'debug']:
+            category = '基本設定'
         else:
-            display_value = str(value)
-            if len(display_value) > 50:
-                display_value = display_value[:47] + "..."
-            
-            # デフォルト値と比較
-            if value != default_value:
-                value_style = "yellow"  # カスタマイズされた値は黄色
-                status = "変更"
-                modified_count += 1
-            else:
-                value_style = "green"   # デフォルト値は緑色
-                status = "標準"
+            category = 'その他'
         
-        table.add_row(
-            key, 
-            f"[{value_style}]{display_value}[/{value_style}]",
-            type(value).__name__,
-            status
-        )
+        if category not in categorized_config:
+            categorized_config[category] = []
+        categorized_config[category].append((key, value))
+    
+    # カテゴリ別に表示
+    for category, items in categorized_config.items():
+        first_in_category = True
+        for key, value in items:
+            total_count += 1
+            default_value = get_default_value_for_key(key, default_config_data)
+            
+            # 機密情報を隠す
+            if any(secret in key.lower() for secret in ['password', 'secret', 'key', 'token']):
+                display_value = "****"
+                value_style = "red"
+            else:
+                display_value = str(value)
+                if len(display_value) > 50:
+                    display_value = display_value[:47] + "..."
+                
+                # デフォルト値と比較
+                # 色の決定ロジックを改善
+                if key == 'aws.region' and value == 'us-east-1':
+                    # AWSリージョンがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key == 'defaults.timeout_seconds' and value == 3600:
+                    # timeout_secondsがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key == 'defaults.max_concurrent_jobs' and value == 10:
+                    # max_concurrent_jobsがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key == 'defaults.output_format' and value == 'INFO':
+                    # output_formatがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif value != default_value:
+                    # デフォルト値と異なる場合は黄色
+                    value_style = "yellow"
+                    modified_count += 1
+                else:
+                    # デフォルト値と同じ場合は緑色
+                    value_style = "green"
+            
+            # 設定項目名を短縮
+            short_key = key.split('.')[-1] if '.' in key else key
+            
+            category_display = category if first_in_category else ""
+            table.add_row(
+                category_display,
+                short_key,
+                Text(display_value, style=value_style)
+            )
+            first_in_category = False
+    
+    # AWSリソース情報を追加
+    aws_resources = get_aws_resource_names(config_data)
+    
+    # DynamoDBテーブル情報
+    if 'dynamodb_tables' in aws_resources:
+        first_dynamodb = True
+        for table_info in aws_resources['dynamodb_tables']:
+            category_display = "DynamoDB" if first_dynamodb else ""
+            table.add_row(
+                category_display,
+                table_info[0],
+                Text(table_info[1], style="cyan")
+            )
+            first_dynamodb = False
+            total_count += 1
+            modified_count += 1  # AWSリソースはカスタマイズ済みとしてカウント
+    
+    # S3バケット情報
+    if 's3_buckets' in aws_resources:
+        first_s3 = True
+        for bucket_info in aws_resources['s3_buckets']:
+            category_display = "S3" if first_s3 else ""
+            table.add_row(
+                category_display,
+                bucket_info[0],
+                Text(bucket_info[1], style="cyan")
+            )
+            first_s3 = False
+            total_count += 1
+            modified_count += 1  # AWSリソースはカスタマイズ済みとしてカウント
     
     console.print(table)
     
@@ -719,7 +1122,7 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
     
     # 凡例を表示
     console.print("\n[dim]🎨 凡例:[/dim]")
-    console.print("  [green]■[/green] 標準値  [yellow]■[/yellow] カスタマイズ済み  [red]■[/red] 機密情報")
+    console.print("  [green]■[/green] 標準値  [yellow]■[/yellow] カスタマイズ済み  [red]■[/red] 機密情報  [cyan]■[/cyan] AWSリソース")
 
 
 def _get_default_config_dict() -> dict:
@@ -728,10 +1131,36 @@ def _get_default_config_dict() -> dict:
         # デフォルトのBunsuiConfigインスタンスを作成
         from ...core.config.models import BunsuiConfig
         default_config = BunsuiConfig()
-        return default_config.model_dump(exclude={'config_file_path'})
-    except Exception:
-        # フォールバック: 空の辞書を返す
-        return {}
+        config_dict = default_config.model_dump(exclude={'config_file_path'})
+        
+        # デバッグ用: デフォルト設定の内容を確認
+        # console.print(f"[dim]DEBUG: デフォルト設定 = {config_dict}[/dim]")
+        
+        return config_dict
+    except Exception as e:
+        # フォールバック: 基本的なデフォルト値を返す
+        # console.print(f"[dim]DEBUG: デフォルト設定取得エラー: {e}[/dim]")
+        return {
+            'mode': 'development',
+            'version': None,
+            'created_at': None,
+            'aws': {
+                'region': 'us-east-1',
+                'profile': None,
+                'dynamodb_table_prefix': 'bunsui',
+                's3_bucket_prefix': 'bunsui'
+            },
+            'defaults': {
+                'timeout_seconds': 3600,
+                'max_concurrent_jobs': 5,
+                'output_format': 'table'
+            },
+            'directories': {
+                'data': str(Path.home() / '.bunsui' / 'data'),
+                'cache': str(Path.home() / '.bunsui' / 'cache'),
+                'logs': str(Path.home() / '.bunsui' / 'logs')
+            }
+        }
 
 
 def _collect_config_files(scope: str, include_secrets: bool, include_samples: bool) -> List[tuple[Path, Path]]:
@@ -803,3 +1232,122 @@ def _collect_from_directory(source_dir: Path, collected_files: List[tuple[Path, 
         # バックアップでの相対パス
         backup_relative_path = Path(base_name) / relative_path
         collected_files.append((file_path, backup_relative_path)) 
+
+
+@config.command()
+@click.option('--force', is_flag=True, help='確認なしで実行')
+@click.option('--dry-run', is_flag=True, help='実際には変更せずに内容を表示')
+@click.pass_context
+def migrate(ctx: click.Context, force: bool, dry_run: bool):
+    """設定ファイルのバージョンを最新の推奨バージョンに更新"""
+    try:
+        _migrate_config_versions(force, dry_run)
+    except Exception as e:
+        console.print(f"[red]設定ファイルの移行中にエラーが発生しました: {e}[/red]")
+        raise click.Abort()
+
+
+def _migrate_config_versions(force: bool = False, dry_run: bool = False):
+    """設定ファイルのバージョンを最新の推奨バージョンに更新"""
+    from pathlib import Path
+    from rich.table import Table
+    from rich.console import Console
+    
+    console = Console()
+    
+    # サポートされているバージョン
+    SUPPORTED_VERSIONS = ["1.0.0"]
+    RECOMMENDED_VERSION = "1.0.0"
+    
+    # 設定ファイルの検索パス
+    config_paths = [
+        Path.cwd() / '.bunsui' / 'config.yaml',
+        Path.home() / '.bunsui' / 'config' / 'config.yaml',
+        Path('/etc/bunsui/config.yaml')
+    ]
+    
+    table = Table(title="設定ファイルバージョン移行", box=box.ROUNDED)
+    table.add_column("ファイル", style="white", min_width=30)
+    table.add_column("現在のバージョン", style="white", min_width=15)
+    table.add_column("新しいバージョン", style="white", min_width=15)
+    table.add_column("状態", style="white", min_width=15)
+    
+    files_to_migrate = []
+    
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                import yaml
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = yaml.safe_load(f)
+                
+                current_version = config_data.get('version', '未設定')
+                
+                # 移行が必要かチェック
+                needs_migration = (
+                    current_version == '未設定' or 
+                    current_version not in SUPPORTED_VERSIONS or
+                    current_version != RECOMMENDED_VERSION
+                )
+                
+                if needs_migration:
+                    files_to_migrate.append((config_path, config_data, current_version))
+                    status = "[yellow]移行予定[/yellow]" if not dry_run else "[blue]確認のみ[/blue]"
+                else:
+                    status = "[green]✓ 最新[/green]"
+                
+                table.add_row(
+                    str(config_path),
+                    current_version,
+                    RECOMMENDED_VERSION if needs_migration else current_version,
+                    status
+                )
+                
+            except Exception as e:
+                table.add_row(
+                    str(config_path),
+                    "エラー",
+                    RECOMMENDED_VERSION,
+                    f"[red]読み込み失敗: {e}[/red]"
+                )
+    
+    if not files_to_migrate:
+        console.print("[green]✓ すべての設定ファイルが最新バージョンです[/green]")
+        return
+    
+    console.print(table)
+    
+    if dry_run:
+        console.print(f"\n[blue]確認のみ: {len(files_to_migrate)}個のファイルが移行対象です[/blue]")
+        return
+    
+    # 確認
+    if not force:
+        if not Confirm.ask(f"\n{len(files_to_migrate)}個のファイルをバージョン {RECOMMENDED_VERSION} に更新しますか？"):
+            console.print("[yellow]移行がキャンセルされました[/yellow]")
+            return
+    
+    # 移行実行
+    migrated_count = 0
+    for config_path, config_data, current_version in files_to_migrate:
+        try:
+            # バックアップ作成
+            backup_path = config_path.with_suffix('.yaml.backup')
+            import shutil
+            shutil.copy2(config_path, backup_path)
+            
+            # バージョン更新
+            config_data['version'] = RECOMMENDED_VERSION
+            
+            # ファイルに保存
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+            
+            migrated_count += 1
+            console.print(f"[green]✓ {config_path} を更新しました (バックアップ: {backup_path})[/green]")
+            
+        except Exception as e:
+            console.print(f"[red]✗ {config_path} の更新に失敗: {e}[/red]")
+    
+    console.print(f"\n[green]✓ {migrated_count}個のファイルを移行しました[/green]")
+    console.print(f"[dim]推奨バージョン: {RECOMMENDED_VERSION}[/dim]") 
