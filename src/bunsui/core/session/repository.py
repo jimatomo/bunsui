@@ -74,8 +74,9 @@ class SessionRepository:
             # Convert session to DynamoDB item
             item = self._session_to_item(session)
             
-            # Add creation timestamp
-            item['created_at'] = datetime.now(timezone.utc).isoformat()
+            # Add creation timestamp (required for sort key)
+            current_time = datetime.now(timezone.utc)
+            item['created_at'] = current_time.isoformat()
             item['updated_at'] = item['created_at']
             
             # Create session in DynamoDB
@@ -123,14 +124,20 @@ class SessionRepository:
         try:
             if self.table is None:
                 raise SessionError("DynamoDB table not initialized")
-            response = self.table.get_item(
-                Key={'session_id': session_id}
+            
+            # Query by session_id since it's the partition key
+            response = self.table.query(
+                KeyConditionExpression='session_id = :session_id',
+                ExpressionAttributeValues={
+                    ':session_id': session_id
+                },
+                Limit=1
             )
             
-            if 'Item' not in response:
+            if not response.get('Items'):
                 return None
             
-            return self._item_to_session(response['Item'])
+            return self._item_to_session(response['Items'][0])
             
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -168,8 +175,7 @@ class SessionRepository:
             if self.table is None:
                 raise SessionError("DynamoDB table not initialized")
             self.table.put_item(
-                Item=item,
-                ConditionExpression=Attr('session_id').exists()
+                Item=item
             )
             
             return session
@@ -204,8 +210,24 @@ class SessionRepository:
         try:
             if self.table is None:
                 raise SessionError("DynamoDB table not initialized")
+            
+            # First get the session to get the created_at timestamp
+            session_response = self.table.query(
+                KeyConditionExpression='session_id = :session_id',
+                ExpressionAttributeValues={
+                    ':session_id': session_id
+                },
+                Limit=1
+            )
+            
+            if not session_response.get('Items'):
+                return False
+            
+            session_item = session_response['Items'][0]
+            created_at = session_item.get('created_at')
+            
             response = self.table.delete_item(
-                Key={'session_id': session_id},
+                Key={'session_id': session_id, 'created_at': created_at},
                 ReturnValues='ALL_OLD'
             )
             
@@ -330,15 +352,30 @@ class SessionRepository:
             # Update session with new checkpoint
             if self.table is None:
                 raise SessionError("DynamoDB table not initialized")
+            
+            # First get the session to get the created_at timestamp
+            session_response = self.table.query(
+                KeyConditionExpression='session_id = :session_id',
+                ExpressionAttributeValues={
+                    ':session_id': session_id
+                },
+                Limit=1
+            )
+            
+            if not session_response.get('Items'):
+                raise SessionError(f"Session with ID {session_id} does not exist")
+            
+            session_item = session_response['Items'][0]
+            created_at = session_item.get('created_at')
+            
             self.table.update_item(
-                Key={'session_id': session_id},
+                Key={'session_id': session_id, 'created_at': created_at},
                 UpdateExpression='SET checkpoints = list_append(if_not_exists(checkpoints, :empty_list), :checkpoint), updated_at = :updated_at',
                 ExpressionAttributeValues={
                     ':checkpoint': [checkpoint_item],
                     ':empty_list': [],
                     ':updated_at': datetime.now(timezone.utc).isoformat()
-                },
-                ConditionExpression=Attr('session_id').exists()
+                }
             )
             
             return True
@@ -373,16 +410,22 @@ class SessionRepository:
         try:
             if self.table is None:
                 raise SessionError("DynamoDB table not initialized")
-            response = self.table.get_item(
-                Key={'session_id': session_id},
-                ProjectionExpression='checkpoints'
+            
+            # Query by session_id since it's the partition key
+            response = self.table.query(
+                KeyConditionExpression='session_id = :session_id',
+                ExpressionAttributeValues={
+                    ':session_id': session_id
+                },
+                ProjectionExpression='checkpoints, created_at',
+                Limit=1
             )
             
-            if 'Item' not in response:
+            if not response.get('Items'):
                 raise SessionError(f"Session with ID {session_id} not found")
             
             checkpoints = []
-            for item in response['Item'].get('checkpoints', []):
+            for item in response['Items'][0].get('checkpoints', []):
                 checkpoint = self._item_to_checkpoint(item)
                 checkpoints.append(checkpoint)
             
@@ -433,11 +476,18 @@ class SessionRepository:
                 for checkpoint in session.checkpoints
             ]
         
-        # Add timestamps if present
+        # Add timestamps (created_at is required for sort key)
         if session.created_at:
             item['created_at'] = session.created_at.isoformat()
+        else:
+            # Set default timestamp if not provided
+            item['created_at'] = datetime.now(timezone.utc).isoformat()
+        
         if session.updated_at:
             item['updated_at'] = session.updated_at.isoformat()
+        else:
+            # Set default timestamp if not provided
+            item['updated_at'] = item['created_at']
         
         return item
     

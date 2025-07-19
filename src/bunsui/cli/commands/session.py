@@ -1,3 +1,4 @@
+
 """
 Session management commands for Bunsui CLI.
 """
@@ -110,10 +111,13 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
         # セッションの作成
         session_manager = get_session_manager()
         
+        # ユーザー情報の取得
+        user_name = os.getenv('USER', 'unknown')
+        user_id = os.getenv('USER_ID', user_name)  # USER_IDが設定されていない場合はUSERを使用
+        
         # メタデータの準備
         metadata = {
             "parameters": param_dict,
-            "user_name": os.getenv('USER', 'unknown'),
             "timeout": timeout,
             "wait": wait
         }
@@ -122,7 +126,9 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
         session = session_manager.create_session(
             pipeline_id=pipeline_id,
             metadata=metadata,
-            total_steps=len(pipeline.jobs)
+            total_steps=len(pipeline.jobs),
+            user_id=user_id,
+            user_name=user_name
         )
         
         # セッションの開始
@@ -344,13 +350,16 @@ def list(ctx: click.Context, format: str, status: Optional[str], pipeline: Optio
             limit=limit
         )
         
+        # パイプライン名を取得するためのリポジトリ
+        pipeline_repository = get_pipeline_repository()
+        
         if not sessions:
             console.print("[yellow]No sessions found[/yellow]")
             return
         
         if format == 'table':
             table = Table(title="Sessions", box=box.ROUNDED)
-            table.add_column("ID", style="cyan")
+            table.add_column("ID", style="cyan", width=36, no_wrap=True)
             table.add_column("Pipeline", style="green")
             table.add_column("Status", style="yellow")
             table.add_column("Progress", style="blue")
@@ -369,9 +378,22 @@ def list(ctx: click.Context, format: str, status: Optional[str], pipeline: Optio
                 progress = session.get_progress_percentage()
                 completed_time = session.completed_at.strftime('%Y-%m-%d %H:%M:%S') if session.completed_at else "N/A"
                 
+                # パイプライン名を取得
+                pipeline_name = session.pipeline_name
+                if not pipeline_name:
+                    try:
+                        # パイプラインリポジトリから名前を取得
+                        pipeline_obj = pipeline_repository.get_pipeline(session.pipeline_id)
+                        if pipeline_obj:
+                            pipeline_name = pipeline_obj.name
+                        else:
+                            pipeline_name = session.pipeline_id
+                    except:
+                        pipeline_name = session.pipeline_id
+                
                 table.add_row(
-                    session.session_id[:12] + "..." if len(session.session_id) > 15 else session.session_id,
-                    session.pipeline_id[:12] + "..." if len(session.pipeline_id) > 15 else session.pipeline_id,
+                    session.session_id,
+                    pipeline_name,
                     f"[{status_color}]{session.status.value}[/{status_color}]",
                     f"{progress:.1f}%",
                     session.started_at.strftime('%Y-%m-%d %H:%M:%S') if session.started_at else "N/A",

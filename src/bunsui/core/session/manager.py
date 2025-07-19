@@ -40,7 +40,9 @@ class SessionManager:
         pipeline_id: str,
         metadata: Optional[Dict[str, Any]] = None,
         total_steps: int = 1,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user_name: Optional[str] = None
     ) -> SessionMetadata:
         """
         Create a new session.
@@ -86,8 +88,8 @@ class SessionManager:
             error_code=None,
             retry_count=0,
             max_retries=3,
-            user_id=None,
-            user_name=None,
+            user_id=user_id,
+            user_name=user_name,
             environment=None,
             region=None
         )
@@ -130,10 +132,14 @@ class SessionManager:
             raise SessionError(f"Session {session_id} not found")
         
         # Validate session can be started
-        if session.status != SessionStatus.CREATED:
+        if session.status not in [SessionStatus.CREATED, SessionStatus.QUEUED]:
             raise SessionError(f"Cannot start session in {session.status.value} state")
         
-        # Update session status
+        # Transition through proper states
+        if session.status == SessionStatus.CREATED:
+            session.transition_to(SessionStatus.QUEUED)
+        
+        # Now transition to running
         session.transition_to(SessionStatus.RUNNING)
         
         # Add checkpoint

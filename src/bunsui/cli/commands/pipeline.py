@@ -226,14 +226,14 @@ def list(ctx: click.Context, format: str, status: Optional[str], limit: int, all
         
         # フォーマットに応じて表示
         if format == 'table':
-            table = Table(title="Pipelines", box=box.ROUNDED)
-            table.add_column("ID", style="cyan")
-            table.add_column("Name", style="green")
-            table.add_column("Version", style="blue")
-            table.add_column("Status", style="yellow")
-            table.add_column("Jobs", style="magenta")
-            table.add_column("Created", style="blue")
-            table.add_column("Updated", style="blue")
+            table = Table(title="Pipelines", box=box.ROUNDED, expand=True, show_header=True)
+            table.add_column("ID", style="cyan", width=40, no_wrap=True, overflow="ignore")
+            table.add_column("Name", style="green", width=15, overflow="fold")
+            table.add_column("Version", style="blue", width=8, overflow="fold")
+            table.add_column("Status", style="yellow", width=8, overflow="fold")
+            table.add_column("Jobs", style="magenta", width=4, overflow="fold")
+            table.add_column("Created", style="blue", width=12, overflow="fold")
+            table.add_column("Updated", style="blue", width=12, overflow="fold")
             
             for pipeline in pipelines:
                 status_color = "green" if pipeline.status == PipelineStatus.ACTIVE else "red"
