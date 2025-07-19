@@ -552,3 +552,143 @@ def cancel(ctx: click.Context, session_id: str, force: bool):
     except Exception as e:
         console.print(f"[red]Error cancelling session: {e}[/red]")
         raise click.Abort() 
+
+
+@session.command()
+@click.argument('session_id')
+@click.option('--force', is_flag=True, help='Force deletion without confirmation')
+@click.pass_context
+def delete(ctx: click.Context, session_id: str, force: bool):
+    """セッションを削除"""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+            raise click.Abort()
+        
+        if not force:
+            console.print(f"[yellow]Session Details:[/yellow]")
+            console.print(f"  ID: {session.session_id}")
+            console.print(f"  Pipeline: {session.pipeline_id}")
+            console.print(f"  Status: {session.status.value}")
+            console.print(f"  Progress: {session.get_progress_percentage():.1f}%")
+            console.print(f"  Created: {session.created_at.strftime('%Y-%m-%d %H:%M:%S') if session.created_at else 'N/A'}")
+            
+            if not click.confirm(f"Are you sure you want to delete session '{session.session_id}'?"):
+                console.print("[yellow]Deletion cancelled[/yellow]")
+                return
+        
+        # セッションの削除
+        deleted = session_manager.delete_session(session_id)
+        
+        if deleted:
+            console.print(f"[green]✓ Session deleted successfully[/green]")
+            console.print(f"Session ID: {session_id}")
+        else:
+            console.print(f"[yellow]Session not found or already deleted: {session_id}[/yellow]")
+        
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
+    except Exception as e:
+        console.print(f"[red]Error deleting session: {e}[/red]")
+        raise click.Abort() 
+
+
+@session.command()
+@click.option('--status', help='Filter by status to delete')
+@click.option('--pipeline', help='Filter by pipeline ID to delete')
+@click.option('--force', is_flag=True, help='Force deletion without confirmation')
+@click.option('--dry-run', is_flag=True, help='Show what would be deleted without actually deleting')
+@click.pass_context
+def delete_all(ctx: click.Context, status: Optional[str], pipeline: Optional[str], force: bool, dry_run: bool):
+    """複数のセッションを一括削除"""
+    try:
+        session_manager = get_session_manager()
+        
+        # ステータスフィルタの準備
+        status_filter = None
+        if status:
+            try:
+                status_filter = SessionStatus(status)
+            except ValueError:
+                console.print(f"[red]Invalid status: {status}[/red]")
+                console.print(f"Valid statuses: {', '.join([s.value for s in SessionStatus])}")
+                raise click.Abort()
+        
+        # 削除対象のセッションを取得
+        sessions = session_manager.list_sessions(
+            pipeline_id=pipeline,
+            status=status_filter,
+            limit=1000  # 大量のセッションに対応
+        )
+        
+        if not sessions:
+            console.print("[yellow]No sessions found to delete[/yellow]")
+            return
+        
+        # 実行中のセッションを除外
+        running_sessions = [s for s in sessions if s.status == SessionStatus.RUNNING]
+        deletable_sessions = [s for s in sessions if s.status != SessionStatus.RUNNING]
+        
+        if running_sessions:
+            console.print(f"[yellow]Warning: {len(running_sessions)} running sessions will be skipped[/yellow]")
+            for session in running_sessions:
+                console.print(f"  - {session.session_id} (Pipeline: {session.pipeline_id})")
+        
+        if not deletable_sessions:
+            console.print("[yellow]No deletable sessions found[/yellow]")
+            return
+        
+        # 削除対象の表示
+        console.print(f"[yellow]Found {len(deletable_sessions)} sessions to delete:[/yellow]")
+        for session in deletable_sessions:
+            console.print(f"  - {session.session_id} (Pipeline: {session.pipeline_id}, Status: {session.status.value})")
+        
+        if dry_run:
+            console.print("[green]Dry run completed. No sessions were deleted.[/green]")
+            return
+        
+        # 確認
+        if not force:
+            if not click.confirm(f"Are you sure you want to delete {len(deletable_sessions)} sessions?"):
+                console.print("[yellow]Deletion cancelled[/yellow]")
+                return
+        
+        # 削除実行
+        deleted_count = 0
+        failed_count = 0
+        
+        for session in deletable_sessions:
+            try:
+                deleted = session_manager.delete_session(session.session_id)
+                if deleted:
+                    deleted_count += 1
+                    console.print(f"[green]✓ Deleted: {session.session_id}[/green]")
+                else:
+                    failed_count += 1
+                    console.print(f"[yellow]Failed to delete: {session.session_id}[/yellow]")
+            except Exception as e:
+                failed_count += 1
+                console.print(f"[red]Error deleting {session.session_id}: {e}[/red]")
+        
+        # 結果表示
+        console.print(f"\n[bold]Deletion Summary:[/bold]")
+        console.print(f"  Successfully deleted: {deleted_count}")
+        console.print(f"  Failed: {failed_count}")
+        console.print(f"  Skipped (running): {len(running_sessions)}")
+        
+    except SessionError as e:
+        console.print(f"[red]Session error: {e}[/red]")
+        raise click.Abort()
+    except AWSError as e:
+        console.print(f"[red]AWS error: {e}[/red]")
+        raise click.Abort()
+    except Exception as e:
+        console.print(f"[red]Error in bulk deletion: {e}[/red]")
+        raise click.Abort() 
