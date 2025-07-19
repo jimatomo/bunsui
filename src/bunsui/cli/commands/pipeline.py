@@ -177,9 +177,9 @@ def create(ctx: click.Context, file: str, name: Optional[str], description: Opti
         }
         
         if format == 'json':
-            console.print(json.dumps(pipeline_data, indent=2))
+            console.print(json.dumps(pipeline_data, indent=2, ensure_ascii=False))
         else:
-            console.print(yaml.dump(pipeline_data, default_flow_style=False))
+            console.print(yaml.dump(pipeline_data, default_flow_style=False, allow_unicode=True))
             
     except ValidationError as e:
         console.print(f"[red]Validation error: {e}[/red]")
@@ -264,7 +264,7 @@ def list(ctx: click.Context, format: str, status: Optional[str], limit: int, all
                 }
                 for p in pipelines
             ]
-            console.print(json.dumps(pipelines_data, indent=2))
+            console.print(json.dumps(pipelines_data, indent=2, ensure_ascii=False))
         else:  # yaml
             pipelines_data = [
                 {
@@ -281,7 +281,7 @@ def list(ctx: click.Context, format: str, status: Optional[str], limit: int, all
                 }
                 for p in pipelines
             ]
-            console.print(yaml.dump(pipelines_data, default_flow_style=False))
+            console.print(yaml.dump(pipelines_data, default_flow_style=False, allow_unicode=True))
             
     except AWSError as e:
         console.print(f"[red]AWS error: {e}[/red]")
@@ -415,7 +415,7 @@ def show(ctx: click.Context, pipeline_id: str, format: str):
                 "metadata": pipeline.metadata,
                 "jobs": [job.to_dict() for job in pipeline.jobs]
             }
-            console.print(json.dumps(pipeline_data, indent=2))
+            console.print(json.dumps(pipeline_data, indent=2, ensure_ascii=False))
         else:  # yaml
             pipeline_data = {
                 "pipeline_id": pipeline.pipeline_id,
@@ -433,7 +433,7 @@ def show(ctx: click.Context, pipeline_id: str, format: str):
                 "metadata": pipeline.metadata,
                 "jobs": [job.to_dict() for job in pipeline.jobs]
             }
-            console.print(yaml.dump(pipeline_data, default_flow_style=False))
+            console.print(yaml.dump(pipeline_data, default_flow_style=False, allow_unicode=True))
             
     except AWSError as e:
         console.print(f"[red]AWS error: {e}[/red]")

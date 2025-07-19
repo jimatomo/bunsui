@@ -163,9 +163,9 @@ def start(ctx: click.Context, pipeline_id: str, parameters: tuple, wait: bool,
             
             console.print(table)
         elif format == 'json':
-            console.print(json.dumps(session_data, indent=2))
+            console.print(json.dumps(session_data, indent=2, ensure_ascii=False))
         else:  # yaml
-            console.print(yaml.dump(session_data, default_flow_style=False))
+            console.print(yaml.dump(session_data, default_flow_style=False, allow_unicode=True))
             
     except ValidationError as e:
         console.print(f"[red]Validation error: {e}[/red]")
@@ -275,7 +275,7 @@ def status(ctx: click.Context, session_id: str, format: str):
                 ],
                 "statistics": stats
             }
-            console.print(json.dumps(session_data, indent=2))
+            console.print(json.dumps(session_data, indent=2, ensure_ascii=False))
         else:  # yaml
             session_data = {
                 "session_id": session.session_id,
@@ -302,7 +302,7 @@ def status(ctx: click.Context, session_id: str, format: str):
                 ],
                 "statistics": stats
             }
-            console.print(yaml.dump(session_data, default_flow_style=False))
+            console.print(yaml.dump(session_data, default_flow_style=False, allow_unicode=True))
             
     except SessionError as e:
         console.print(f"[red]Session error: {e}[/red]")
@@ -396,7 +396,7 @@ def list(ctx: click.Context, format: str, status: Optional[str], pipeline: Optio
                 }
                 for s in sessions
             ]
-            console.print(json.dumps(sessions_data, indent=2))
+            console.print(json.dumps(sessions_data, indent=2, ensure_ascii=False))
         else:  # yaml
             sessions_data = [
                 {
@@ -414,7 +414,7 @@ def list(ctx: click.Context, format: str, status: Optional[str], pipeline: Optio
                 }
                 for s in sessions
             ]
-            console.print(yaml.dump(sessions_data, default_flow_style=False))
+            console.print(yaml.dump(sessions_data, default_flow_style=False, allow_unicode=True))
             
     except SessionError as e:
         console.print(f"[red]Session error: {e}[/red]")

@@ -186,10 +186,10 @@ def tail(ctx: click.Context, session_id: str, follow: bool, lines: int, since: O
                 console.print(f"[{level_color}]{entry.level:<8}[/{level_color}] {timestamp_str}{context_str} - {entry.message}")
         
         elif format == 'json':
-            console.print(json.dumps([entry.raw_data for entry in log_entries], indent=2, default=str))
+            console.print(json.dumps([entry.raw_data for entry in log_entries], indent=2, default=str, ensure_ascii=False))
         
         else:  # yaml
-            console.print(yaml.dump([entry.raw_data for entry in log_entries], default_flow_style=False))
+            console.print(yaml.dump([entry.raw_data for entry in log_entries], default_flow_style=False, allow_unicode=True))
         
         # Handle follow mode
         if follow:
@@ -242,10 +242,10 @@ def tail(ctx: click.Context, session_id: str, follow: bool, lines: int, since: O
                                 console.print(f"[{level_color}]{entry.level:<8}[/{level_color}] {timestamp_str}{context_str} - {entry.message}")
                             
                             elif format == 'json':
-                                console.print(json.dumps(entry.raw_data, indent=2, default=str))
+                                console.print(json.dumps(entry.raw_data, indent=2, default=str, ensure_ascii=False))
                             
                             else:  # yaml
-                                console.print(yaml.dump(entry.raw_data, default_flow_style=False))
+                                console.print(yaml.dump(entry.raw_data, default_flow_style=False, allow_unicode=True))
                         
                         last_timestamp = new_entries[-1].timestamp
                         
@@ -456,10 +456,10 @@ def filter(ctx: click.Context, session_id: str, pattern: Optional[str], case_sen
                 console.print(f"[{level_color}]{entry.level:<8}[/{level_color}] {timestamp_str}{context_str} - {message}")
         
         elif format == 'json':
-            console.print(json.dumps([entry.raw_data for entry in log_entries], indent=2, default=str))
+            console.print(json.dumps([entry.raw_data for entry in log_entries], indent=2, default=str, ensure_ascii=False))
         
         else:  # yaml
-            console.print(yaml.dump([entry.raw_data for entry in log_entries], default_flow_style=False))
+            console.print(yaml.dump([entry.raw_data for entry in log_entries], default_flow_style=False, allow_unicode=True))
             
     except ValidationError as e:
         console.print(f"[red]Validation error: {e}[/red]")
@@ -602,7 +602,7 @@ def summary(ctx: click.Context, session_id: str, format: str):
                 "time_range": log_summary.time_range,
                 "jobs": log_summary.jobs
             }
-            console.print(json.dumps(summary_dict, indent=2, default=str))
+            console.print(json.dumps(summary_dict, indent=2, default=str, ensure_ascii=False))
             
         else:  # yaml
             summary_dict = {
@@ -612,7 +612,7 @@ def summary(ctx: click.Context, session_id: str, format: str):
                 "time_range": log_summary.time_range,
                 "jobs": log_summary.jobs
             }
-            console.print(yaml.dump(summary_dict, default_flow_style=False))
+            console.print(yaml.dump(summary_dict, default_flow_style=False, allow_unicode=True))
             
     except ValidationError as e:
         console.print(f"[red]Validation error: {e}[/red]")

@@ -461,9 +461,9 @@ class ConfigCommandHandler:
             if format == 'table':
                 ConfigCommandHandler._display_config_table(config_data)
             elif format == 'json':
-                console.print(json.dumps(config_data, indent=2, default=str))
+                console.print(json.dumps(config_data, indent=2, default=str, ensure_ascii=False))
             else:  # yaml
-                console.print(yaml.dump(config_data, default_flow_style=False))
+                console.print(yaml.dump(config_data, default_flow_style=False, allow_unicode=True))
                 
         except Exception as e:
             console.print(f"[red]設定の表示中にエラーが発生しました: {e}[/red]")

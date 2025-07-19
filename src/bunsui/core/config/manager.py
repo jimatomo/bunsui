@@ -1098,9 +1098,9 @@ class ConfigManager:
         data = self._config.model_dump(exclude_unset=True)
         
         if format == 'yaml':
-            return yaml.dump(data, default_flow_style=False)
+            return yaml.dump(data, default_flow_style=False, allow_unicode=True)
         elif format == 'json':
-            return json.dumps(data, indent=2)
+            return json.dumps(data, indent=2, ensure_ascii=False)
         else:
             raise ValueError(f"Unsupported format: {format}")
     

@@ -215,10 +215,10 @@ class LogService:
         entries = self.get_session_logs(session_id, log_filter)
         
         if output_format == LogFormat.JSON:
-            return json.dumps([entry.raw_data for entry in entries], indent=2)
+            return json.dumps([entry.raw_data for entry in entries], indent=2, ensure_ascii=False)
         elif output_format == LogFormat.YAML:
             import yaml
-            return yaml.dump([entry.raw_data for entry in entries], default_flow_style=False)
+            return yaml.dump([entry.raw_data for entry in entries], default_flow_style=False, allow_unicode=True)
         elif output_format == LogFormat.CSV:
             import csv
             import io

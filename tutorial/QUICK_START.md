@@ -2,21 +2,8 @@
 
 このガイドでは、Bunsuiを使い始めるための最初のステップを説明します。
 
-## 0. 初期セットアップ（推奨）
 
-**新機能！** まず`bunsui init`コマンドで簡単にセットアップを行いましょう：
-
-```bash
-# 🚀 インタラクティブセットアップ（推奨）
-bunsui init
-
-# または、プロジェクトにサンプルファイルのみ追加
-bunsui init setup --samples-only
-```
-
-初期化完了後、次のステップガイドが表示されます。
-
-## 1. インストール確認
+## 0. インストール確認
 
 ```bash
 # バージョンを確認
@@ -27,28 +14,19 @@ bunsui --help
 
 # 詳細情報を表示
 bunsui --verbose version
-
-# 初期化の検証
-bunsui init validate
 ```
 
-## 2. 最初のパイプラインを作成
 
-### 初期化済みの場合（推奨）
-
-`bunsui init`を実行している場合、サンプルファイルが利用可能です：
+## 1. 初期化対応
 
 ```bash
-# 初期化時に作成されたサンプルを使用
-bunsui pipeline create --file ~/.bunsui/samples/simple_pipeline.yaml --dry-run
-bunsui pipeline create --file ~/.bunsui/samples/sample_pipeline.yaml --dry-run
 
-# または、プロジェクトディレクトリのtutorialフォルダ（--samples-onlyの場合）
-cd tutorial
-bunsui pipeline create --file simple_pipeline.yaml --dry-run
+# 初期化の検証
+bunsui init
 ```
 
-### 手動セットアップの場合
+
+## 2. 最初のパイプラインを作成
 
 このディレクトリには、以下のサンプルファイルが含まれています：
 
@@ -60,7 +38,7 @@ bunsui pipeline create --file simple_pipeline.yaml --dry-run
 bunsui pipeline create --file simple_pipeline.yaml --dry-run
 
 # 名前と説明を指定してドライラン
-bunsui pipeline create --file simple_pipeline.yaml --name "My First Pipeline" --description "初めてのパイプライン" --dry-run
+bunsui pipeline create --file simple_pipeline.yaml --name "my_first_ipeline" --description "My first pipeline" --dry-run
 ```
 
 ### 実際にパイプラインを作成
@@ -68,12 +46,6 @@ bunsui pipeline create --file simple_pipeline.yaml --name "My First Pipeline" --
 ```bash
 # シンプルなパイプラインを作成
 bunsui pipeline create --file simple_pipeline.yaml --name "My First Pipeline"
-
-# 説明付きで作成
-bunsui pipeline create --file sample_pipeline.yaml --name "ETL Pipeline" --description "データ処理用のETLパイプライン"
-
-# JSON形式で出力
-bunsui pipeline create --file simple_pipeline.yaml --name "Simple Pipeline" --format json
 ```
 
 ## 3. パイプラインの確認
