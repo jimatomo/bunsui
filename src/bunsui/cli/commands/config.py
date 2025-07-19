@@ -112,28 +112,18 @@ def delete(ctx: click.Context, key: str):
 
 
 @config.command()
-@click.option('--scope', type=click.Choice(['all', 'local', 'project', 'global']), 
-              default='all', help='表示する設定のスコープ')
 @click.option('--format', type=click.Choice(['table', 'json', 'yaml']), 
               default='table', help='出力形式')
-@click.option('--verbose', '-v', is_flag=True, help='詳細表示（すべての設定項目を表示）')
-@click.option('--show-defaults', is_flag=True, help='デフォルト値も表示')
 @click.option('--check-version', is_flag=True, help='バージョンの整合性をチェック')
 @click.pass_context
-def list(ctx: click.Context, scope: str, format: str, verbose: bool, show_defaults: bool, check_version: bool):
+def list(ctx: click.Context, format: str, check_version: bool):
     """設定を表示"""
     try:
         if check_version:
             _check_config_versions()
             return
             
-        if format == 'table':
-            if verbose:
-                _display_all_configs(format, verbose, show_defaults)
-            else:
-                _display_scope_config(scope, format, verbose, show_defaults)
-        else:
-            _display_scope_config(scope, format, verbose, show_defaults)
+        _display_all_configs(format)
             
     except Exception as e:
         console.print(f"[red]設定の表示中にエラーが発生しました: {e}[/red]")
@@ -453,7 +443,7 @@ def _convert_value(value: str):
     return value
 
 
-def _display_all_configs(format: str, verbose: bool = False, show_defaults: bool = False):
+def _display_all_configs(format: str):
     """すべての設定を表示"""
     from pathlib import Path
     import yaml
@@ -493,7 +483,7 @@ def _display_all_configs(format: str, verbose: bool = False, show_defaults: bool
         console.print("[dim]📁 設定ファイル: デフォルト設定を使用[/dim]")
     
     if format == 'table':
-        _display_config_table(config_data, verbose=verbose, show_defaults=show_defaults)
+        _display_config_table(config_data)
     elif format == 'json':
         console.print(json.dumps(config_data, indent=2, default=str))
     else:  # yaml
@@ -617,55 +607,13 @@ def find_project_root(start_path: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def _display_scope_config(scope: str, format: str, verbose: bool = False, show_defaults: bool = False):
-    """特定のスコープの設定を表示"""
-    if scope == 'all':
-        # すべてのスコープの設定を表示
-        _display_all_configs(format, verbose, show_defaults)
-        return
-    
-    project_root = find_project_root()
-    scope_files = {
-        'local': Path.cwd() / '.bunsui' / 'config.yaml',
-        'project': project_root / '.bunsui' / 'config.yaml' if project_root else None,
-        'global': Path.home() / '.bunsui' / 'config' / 'config.yaml'
-    }
-    
-    config_file = scope_files.get(scope)
-    if not config_file or not config_file.exists():
-        console.print(f"[yellow]{scope} スコープの設定ファイルが見つかりません[/yellow]")
-        return
-    
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            if config_file.suffix in ['.yaml', '.yml']:
-                config_data = yaml.safe_load(f)
-            else:
-                config_data = json.load(f)
-        
-        if format == 'table':
-            _display_config_table(config_data, verbose=verbose, show_defaults=show_defaults)
-        elif format == 'json':
-            console.print(json.dumps(config_data, indent=2, default=str))
-        else:  # yaml
-            console.print(yaml.dump(config_data, default_flow_style=False))
-            
-    except Exception as e:
-        console.print(f"[red]設定ファイル読み込みエラー: {e}[/red]")
-
-
-def _display_config_table(config_data: dict, verbose: bool = False, show_defaults: bool = False):
+def _display_config_table(config_data: dict):
     """設定をテーブル形式で表示"""
-    
-    if verbose:
-        # 詳細表示: すべての設定をフラット化して表示
-        _display_detailed_config_table(config_data, show_defaults)
-    else:
-        # 簡潔表示: カテゴリ別に重要な設定のみ表示
-        _display_summary_config_table(config_data, show_defaults)
+    # 詳細表示: すべての設定をフラット化して表示
+    _display_detailed_config_table(config_data)
 
 
-def _display_summary_config_table(config_data: dict, show_defaults: bool = False):
+def _display_summary_config_table(config_data: dict):
     """重要な設定のみを表示するサマリーテーブル"""
     
     # デフォルト設定を取得
@@ -675,8 +623,9 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     important_keys = {
         '基本設定': ['mode', 'version', 'created_at'],
         'AWS': ['aws.region', 'aws.profile'],
-        'パイプライン': ['defaults.timeout_seconds', 'defaults.max_concurrent_jobs', 'defaults.output_format'],
-        'ディレクトリ': ['directories.data', 'directories.cache', 'directories.logs']
+        'パイプライン': ['pipeline.default_timeout', 'pipeline.max_concurrent_jobs'],
+        'ログ': ['logging.level'],
+        'ディレクトリ': ['data_dir', 'cache_dir']
     }
     
     def get_nested_value(data: dict, key_path: str):
@@ -727,7 +676,7 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     def is_value_modified(key_path: str, current_value, default_value) -> bool:
         """値がデフォルトから変更されているかチェック"""
         # パス系の設定は特別扱い（絶対パス展開されるため）
-        if any(path_key in key_path for path_key in ['data_dir', 'config_dir', 'cache_dir']):
+        if any(path_key in key_path for path_key in ['data_dir', 'config_dir', 'cache_dir', 'directories.data', 'directories.cache', 'directories.logs']):
             # パス系は名前で判定
             if hasattr(current_value, 'name'):
                 current_name = current_value.name
@@ -782,7 +731,8 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     table = Table(title="Bunsui 設定サマリー", box=box.ROUNDED)
     table.add_column("カテゴリ", style="white", min_width=12)
     table.add_column("設定項目", style="white", min_width=25)
-    table.add_column("値", min_width=30)
+    table.add_column("現在の値", min_width=30)
+    table.add_column("デフォルト値", min_width=30)
     
     modified_count = 0
     total_count = 0
@@ -793,8 +743,8 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             current_value = get_nested_value(config_data, key_path)
             default_value = get_default_value_for_key(key_path, default_config_data)
             
-            # デフォルト値を表示しない場合、Noneや空文字列はスキップ
-            if not show_defaults and (current_value is None or current_value == ""):
+            # Noneや空文字列はスキップ
+            if current_value is None or current_value == "":
                 continue
             
             total_count += 1
@@ -815,14 +765,17 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
                 if key_path == 'aws.region' and current_value == 'us-east-1':
                     # AWSリージョンがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key_path == 'defaults.timeout_seconds' and current_value == '3600':
-                    # timeout_secondsがデフォルト値の場合は緑色
+                elif key_path == 'pipeline.default_timeout' and current_value == 3600:
+                    # default_timeoutがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key_path == 'defaults.max_concurrent_jobs' and current_value == '10':
+                elif key_path == 'pipeline.max_concurrent_jobs' and current_value == 10:
                     # max_concurrent_jobsがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key_path == 'defaults.output_format' and current_value == 'INFO':
-                    # output_formatがデフォルト値の場合は緑色
+                elif key_path == 'logging.level' and current_value == 'INFO':
+                    # logging.levelがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif key_path == 'version' and current_value == '1.0.0':
+                    # versionがデフォルト値の場合は緑色
                     value_style = "green"
                 elif is_modified:
                     # デフォルト値と異なる場合は黄色
@@ -835,11 +788,20 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             # 設定項目名を短縮
             short_key = key_path.split('.')[-1]
             
+            # デフォルト値の表示
+            if key_path.startswith('aws.'):
+                default_display = "-"
+            else:
+                default_display = str(default_value) if default_value is not None else "未設定"
+                if len(default_display) > 50:
+                    default_display = default_display[:47] + "..."
+            
             category_display = category if first_in_category else ""
             table.add_row(
                 category_display, 
                 short_key, 
-                Text(display_value, style=value_style)
+                Text(display_value, style=value_style),
+                Text(default_display, style="dim")
             )
             first_in_category = False
     
@@ -854,7 +816,8 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             table.add_row(
                 category_display,
                 table_info[0],
-                Text(table_info[1], style="cyan")
+                Text(table_info[1], style="cyan"),
+                Text("-", style="dim")
             )
             first_dynamodb = False
             total_count += 1
@@ -868,7 +831,8 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
             table.add_row(
                 category_display,
                 bucket_info[0],
-                Text(bucket_info[1], style="cyan")
+                Text(bucket_info[1], style="cyan"),
+                Text("-", style="dim")
             )
             first_s3 = False
             total_count += 1
@@ -885,9 +849,7 @@ def _display_summary_config_table(config_data: dict, show_defaults: bool = False
     console.print("\n[dim]🎨 凡例:[/dim]")
     console.print("  [green]■[/green] 標準値  [yellow]■[/yellow] カスタマイズ済み  [red]■[/red] 機密情報  [cyan]■[/cyan] AWSリソース")
     
-    # 詳細表示の案内
-    console.print("\n[dim]💡 すべての設定を表示するには --verbose オプションを使用してください[/dim]")
-    console.print("[dim]   例: bunsui config list --verbose[/dim]")
+
 
 
 def _flatten_dict(d, parent_key='', sep='.'):
@@ -906,7 +868,7 @@ def _flatten_dict(d, parent_key='', sep='.'):
     return dict(items)
 
 
-def _display_detailed_config_table(config_data: dict, show_defaults: bool = False):
+def _display_detailed_config_table(config_data: dict):
     """詳細な設定をフラット化して表示"""
     
     # デフォルト設定を取得
@@ -930,12 +892,11 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
         """設定項目の名前をマッピングしてデフォルト値を取得"""
         # 設定項目名のマッピング
         key_mapping = {
-            'defaults.timeout_seconds': 'pipeline.default_timeout',
-            'defaults.max_concurrent_jobs': 'pipeline.max_concurrent_jobs',
-            'defaults.output_format': 'logging.level',  # 適切なデフォルト値がない場合
-            'directories.data': 'data_dir',
-            'directories.cache': 'cache_dir',
-            'directories.logs': 'cache_dir',  # logs_dirがない場合はcache_dirを使用
+            'pipeline.default_timeout': 'pipeline.default_timeout',
+            'pipeline.max_concurrent_jobs': 'pipeline.max_concurrent_jobs',
+            'logging.level': 'logging.level',
+            'data_dir': 'data_dir',
+            'cache_dir': 'cache_dir'
         }
         
         # マッピングされたキーを使用してデフォルト値を取得
@@ -945,7 +906,7 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
     def is_value_modified(key_path: str, current_value, default_value) -> bool:
         """値がデフォルトから変更されているかチェック"""
         # パス系の設定は特別扱い（絶対パス展開されるため）
-        if any(path_key in key_path for path_key in ['data_dir', 'config_dir', 'cache_dir']):
+        if any(path_key in key_path for path_key in ['data_dir', 'config_dir', 'cache_dir', 'directories.data', 'directories.cache', 'directories.logs']):
             # パス系は名前で判定
             if hasattr(current_value, 'name'):
                 current_name = current_value.name
@@ -1000,7 +961,8 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
     table = Table(title="Bunsui 設定（詳細）", box=box.ROUNDED)
     table.add_column("カテゴリ", style="white", min_width=12)
     table.add_column("設定項目", style="white", min_width=35)
-    table.add_column("値", min_width=30)
+    table.add_column("現在の値", min_width=30)
+    table.add_column("デフォルト値", min_width=30)
     
     modified_count = 0
     total_count = 0
@@ -1008,9 +970,12 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
     # カテゴリ別に設定を整理
     categorized_config = {}
     for key, value in sorted(flat_config.items()):
-        # デフォルト値を表示しない場合、空の値をスキップ
-        if not show_defaults and (value is None or value == "" or 
-                                 (hasattr(value, '__len__') and len(value) == 0)):
+        # 空の値をスキップ
+        if value is None or value == "" or (hasattr(value, '__len__') and len(value) == 0):
+            continue
+        
+        # AWSリソース関連の設定は除外（専用カテゴリで表示するため）
+        if key.startswith('aws.created_resources') or key.startswith('aws.dynamodb_table_prefix') or key.startswith('aws.s3_bucket_prefix'):
             continue
         
         # カテゴリを決定
@@ -1054,16 +1019,19 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
                 if key == 'aws.region' and value == 'us-east-1':
                     # AWSリージョンがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key == 'defaults.timeout_seconds' and value == 3600:
-                    # timeout_secondsがデフォルト値の場合は緑色
+                elif key == 'pipeline.default_timeout' and value == 3600:
+                    # default_timeoutがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key == 'defaults.max_concurrent_jobs' and value == 10:
+                elif key == 'pipeline.max_concurrent_jobs' and value == 10:
                     # max_concurrent_jobsがデフォルト値の場合は緑色
                     value_style = "green"
-                elif key == 'defaults.output_format' and value == 'INFO':
-                    # output_formatがデフォルト値の場合は緑色
+                elif key == 'logging.level' and value == 'INFO':
+                    # logging.levelがデフォルト値の場合は緑色
                     value_style = "green"
-                elif value != default_value:
+                elif key == 'version' and value == '1.0.0':
+                    # versionがデフォルト値の場合は緑色
+                    value_style = "green"
+                elif is_value_modified(key, value, default_value):
                     # デフォルト値と異なる場合は黄色
                     value_style = "yellow"
                     modified_count += 1
@@ -1074,11 +1042,20 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
             # 設定項目名を短縮
             short_key = key.split('.')[-1] if '.' in key else key
             
+            # デフォルト値の表示
+            if key.startswith('aws.'):
+                default_display = "-"
+            else:
+                default_display = str(default_value) if default_value is not None else "未設定"
+                if len(default_display) > 50:
+                    default_display = default_display[:47] + "..."
+            
             category_display = category if first_in_category else ""
             table.add_row(
                 category_display,
                 short_key,
-                Text(display_value, style=value_style)
+                Text(display_value, style=value_style),
+                Text(default_display, style="dim")
             )
             first_in_category = False
     
@@ -1093,7 +1070,8 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
             table.add_row(
                 category_display,
                 table_info[0],
-                Text(table_info[1], style="cyan")
+                Text(table_info[1], style="cyan"),
+                Text("-", style="dim")
             )
             first_dynamodb = False
             total_count += 1
@@ -1107,7 +1085,8 @@ def _display_detailed_config_table(config_data: dict, show_defaults: bool = Fals
             table.add_row(
                 category_display,
                 bucket_info[0],
-                Text(bucket_info[1], style="cyan")
+                Text(bucket_info[1], style="cyan"),
+                Text("-", style="dim")
             )
             first_s3 = False
             total_count += 1
@@ -1142,7 +1121,7 @@ def _get_default_config_dict() -> dict:
         # console.print(f"[dim]DEBUG: デフォルト設定取得エラー: {e}[/dim]")
         return {
             'mode': 'development',
-            'version': None,
+            'version': '1.0.0',
             'created_at': None,
             'aws': {
                 'region': 'us-east-1',
@@ -1150,16 +1129,15 @@ def _get_default_config_dict() -> dict:
                 'dynamodb_table_prefix': 'bunsui',
                 's3_bucket_prefix': 'bunsui'
             },
-            'defaults': {
-                'timeout_seconds': 3600,
-                'max_concurrent_jobs': 5,
-                'output_format': 'table'
+            'pipeline': {
+                'default_timeout': 3600,
+                'max_concurrent_jobs': 10
             },
-            'directories': {
-                'data': str(Path.home() / '.bunsui' / 'data'),
-                'cache': str(Path.home() / '.bunsui' / 'cache'),
-                'logs': str(Path.home() / '.bunsui' / 'logs')
-            }
+            'logging': {
+                'level': 'INFO'
+            },
+            'data_dir': str(Path.home() / '.bunsui' / 'data'),
+            'cache_dir': str(Path.home() / '.bunsui' / 'cache')
         }
 
 

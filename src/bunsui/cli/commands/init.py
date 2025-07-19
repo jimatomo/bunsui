@@ -385,15 +385,14 @@ def _setup_offline(ctx: click.Context, config_dir: Path):
         'mode': 'offline',
         'version': '1.0.0',
         'created_at': datetime.utcnow().isoformat(),
-        'directories': {
-            'data': str(config_dir / 'data'),
-            'cache': str(config_dir / 'cache'),
-            'logs': str(config_dir / 'logs')
+        'data_dir': str(config_dir / 'data'),
+        'cache_dir': str(config_dir / 'cache'),
+        'pipeline': {
+            'default_timeout': 3600,
+            'max_concurrent_jobs': 10
         },
-        'defaults': {
-            'timeout_seconds': 3600,
-            'max_concurrent_jobs': 5,
-            'output_format': 'table'
+        'logging': {
+            'level': 'INFO'
         }
     }
     
@@ -434,15 +433,14 @@ def _setup_aws(ctx: click.Context, config_dir: Path, region: Optional[str],
             'dynamodb_table_prefix': 'bunsui-dev',
             's3_bucket_prefix': 'bunsui-dev',
         },
-        'directories': {
-            'data': str(config_dir / 'data'),
-            'cache': str(config_dir / 'cache'),
-            'logs': str(config_dir / 'logs')
+        'data_dir': str(config_dir / 'data'),
+        'cache_dir': str(config_dir / 'cache'),
+        'pipeline': {
+            'default_timeout': 3600,
+            'max_concurrent_jobs': 10
         },
-        'defaults': {
-            'timeout_seconds': 3600,
-            'max_concurrent_jobs': 5,
-            'output_format': 'table'
+        'logging': {
+            'level': 'INFO'
         }
     }
     
@@ -520,15 +518,14 @@ def _setup_production(ctx: click.Context, config_dir: Path, region: Optional[str
             'dynamodb_table_prefix': 'bunsui-prod',
             's3_bucket_prefix': 'bunsui-prod',
         },
-        'directories': {
-            'data': str(config_dir / 'data'),
-            'cache': str(config_dir / 'cache'),
-            'logs': str(config_dir / 'logs')
+        'data_dir': str(config_dir / 'data'),
+        'cache_dir': str(config_dir / 'cache'),
+        'pipeline': {
+            'default_timeout': 7200,
+            'max_concurrent_jobs': 10
         },
-        'defaults': {
-            'timeout_seconds': 7200,
-            'max_concurrent_jobs': 10,
-            'output_format': 'json'
+        'logging': {
+            'level': 'WARNING'
         },
         'security': {
             'enable_audit_logs': True,
