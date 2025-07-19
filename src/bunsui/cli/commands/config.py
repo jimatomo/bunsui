@@ -446,7 +446,7 @@ def _display_detailed_config_table(config_data: dict):
         # その他は値で直接比較
         return current_value != default_value
     
-    table = Table(title="Bunsui 設定（詳細）", box=box.ROUNDED)
+    table = Table(title="Bunsui Configs", box=box.ROUNDED)
     table.add_column("カテゴリ", style="white", min_width=12)
     table.add_column("設定項目", style="white", min_width=40)
     table.add_column("現在の値", style="white", min_width=30)
@@ -512,7 +512,7 @@ def _display_detailed_config_table(config_data: dict):
                 
                 # AWSリソースの設定項目は特別な色分け
                 if key.startswith('aws.'):
-                    # aws.profileとaws.regionは基本設定として扱う
+                    # aws.profileとaws.regionは基本設定として扱う（AWSリソースとして色分けしない）
                     if key in ['aws.profile', 'aws.region']:
                         if is_value_modified(key, value, default_value):
                             # デフォルト値と異なる場合は黄色
@@ -592,8 +592,8 @@ def _get_default_config_dict() -> dict:
             'aws': {
                 'region': 'us-east-1',
                 'profile': None,
-                'dynamodb_table_prefix': 'bunsui',
-                's3_bucket_prefix': 'bunsui'
+                'dynamodb_table_prefix': '',
+                's3_bucket_prefix': ''
             },
             'pipeline': {
                 'default_timeout': 3600,

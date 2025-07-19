@@ -7,15 +7,10 @@
 **新機能！** まず`bunsui init`コマンドで簡単にセットアップを行いましょう：
 
 ```bash
-# 🚀 シンプルなセットアップ（推奨）
-bunsui init setup
+# 🚀 インタラクティブセットアップ（推奨）
+bunsui init
 
-# または、用途に応じたセットアップ
-bunsui init setup --mode learning      # 学習用（オフラインモード）
-bunsui init setup --mode aws           # AWS開発環境用
-bunsui init setup --mode production    # 本番環境用
-
-# プロジェクトにサンプルファイルのみ追加
+# または、プロジェクトにサンプルファイルのみ追加
 bunsui init setup --samples-only
 ```
 
@@ -41,7 +36,7 @@ bunsui init validate
 
 ### 初期化済みの場合（推奨）
 
-`bunsui init setup`を実行している場合、サンプルファイルが利用可能です：
+`bunsui init`を実行している場合、サンプルファイルが利用可能です：
 
 ```bash
 # 初期化時に作成されたサンプルを使用
@@ -191,18 +186,16 @@ bunsui config reset
 ## 8. 初期化管理
 
 ```bash
-# セットアップ状況の確認
+# インタラクティブ初期化
+bunsui init
+
+# 初期化の検証
 bunsui init validate
 
 # 特定項目のみ検証
 bunsui init validate --check-config
 bunsui init validate --check-aws
 bunsui init validate --check-samples
-
-# 設定のリセット
-bunsui init reset --config-only    # 設定のみ
-bunsui init reset --samples-only   # サンプルファイルのみ
-bunsui init reset --force           # 確認なしでリセット
 ```
 
 ## 9. 診断
@@ -256,8 +249,8 @@ bunsui --verbose --profile prod --region us-east-1 session start pipeline-1
 ### 🌟 最短経路（5分で開始）
 
 ```bash
-# 1. 初期化（学習用）
-bunsui init setup --mode learning
+# 1. 初期化（インタラクティブ）
+bunsui init
 
 # 2. サンプルでテスト
 bunsui pipeline create --file ~/.bunsui/samples/simple_pipeline.yaml --dry-run
@@ -290,24 +283,27 @@ bunsui pipeline create --file my-pipeline.yaml --dry-run
 
 ### 初期化関連のエラー
 
-**`bunsui init setup`でエラーが発生する場合：**
+**`bunsui init`でエラーが発生する場合：**
 
 1. **ディレクトリ権限エラー**：
    ```bash
-   bunsui init setup --config-dir ~/custom-bunsui
+   # カスタムディレクトリを選択するか、権限を確認してください
+   ls -la ~/.bunsui
    ```
 
 2. **既存設定の競合**：
    ```bash
-   bunsui init setup --force
+   # 既存設定をバックアップしてから初期化を再実行
+   mv ~/.bunsui ~/.bunsui.backup
+   bunsui init
    ```
 
 3. **AWS認証エラー（開発モード）**：
    ```bash
    # AWS CLIの設定を確認
    aws configure list
-   # オフラインモードにフォールバック
-   bunsui init setup --mode offline
+   # インタラクティブモードで学習用を選択
+   bunsui init
    ```
 
 ### パイプライン定義エラー
