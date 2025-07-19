@@ -13,9 +13,14 @@ from enum import Enum
 class TableName(str, Enum):
     """DynamoDB table names."""
 
-    SESSIONS = "bunsui-sessions"
-    JOB_HISTORY = "bunsui-job-history"
-    PIPELINES = "bunsui-pipelines"
+    SESSIONS = "sessions"
+    JOB_HISTORY = "job-history"
+    PIPELINES = "pipelines"
+    
+    @classmethod
+    def get_full_name(cls, table_name: 'TableName', prefix: str = "bunsui") -> str:
+        """Get full table name with prefix."""
+        return f"{prefix}-{table_name.value}"
 
 
 class IndexName(str, Enum):
@@ -313,14 +318,21 @@ def get_table_schemas() -> List[TableSchema]:
     ]
 
 
-def get_table_schema(table_name: TableName) -> Optional[TableSchema]:
+def get_table_schema(table_name: TableName, prefix: str = "bunsui") -> Optional[TableSchema]:
     """Get schema for a specific table."""
     schemas = {
         TableName.SESSIONS: SESSIONS_TABLE_SCHEMA,
         TableName.JOB_HISTORY: JOB_HISTORY_TABLE_SCHEMA,
         TableName.PIPELINES: PIPELINES_TABLE_SCHEMA,
     }
-    return schemas.get(table_name)
+    base_schema = schemas.get(table_name)
+    if base_schema:
+        # Create a copy with the correct table name
+        import copy
+        schema_copy = copy.deepcopy(base_schema)
+        schema_copy.table_name = TableName.get_full_name(table_name, prefix)
+        return schema_copy
+    return None
 
 
 def validate_access_pattern(table_name: TableName, pattern_name: str) -> bool:

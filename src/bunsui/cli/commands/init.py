@@ -901,23 +901,14 @@ def _create_aws_resources(region: Optional[str], profile: Optional[str], is_prod
         
         # DynamoDBテーブルの作成（冗長なbunsuiを除去）
         console.print("[dim]📊 DynamoDBテーブルを作成中...[/dim]")
-        dynamodb_client = DynamoDBClient(region_name)
-        
-        # テーブル名のマッピング（冗長なbunsuiを除去）
-        table_name_mapping = {
-            TableName.SESSIONS: "sessions",
-            TableName.JOB_HISTORY: "job-history", 
-            TableName.PIPELINES: "pipelines"
-        }
+        dynamodb_client = DynamoDBClient(region_name, table_prefix=prefix)
         
         created_tables = {}
         for table_name in [TableName.SESSIONS, TableName.JOB_HISTORY, TableName.PIPELINES]:
             try:
-                # 冗長なbunsuiを除去したテーブル名
-                simple_name = table_name_mapping[table_name]
-                full_table_name = f"{prefix}-{simple_name}"
-                # 文字列キーを使用してYAML互換にする（table_name.valueではなく、実際のテーブル名を使用）
-                table_key = f"{prefix}-{simple_name}"
+                # テーブル名を取得
+                full_table_name = TableName.get_full_name(table_name, prefix)
+                table_key = f"{prefix}-{table_name.value}"
                 created_tables[table_key] = full_table_name
                 
                 console.print(f"[dim]  - {full_table_name}[/dim]")

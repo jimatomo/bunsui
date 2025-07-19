@@ -16,14 +16,15 @@ from bunsui.core.exceptions import ValidationError
 class DynamoDBClient:
     """High-level DynamoDB client for bunsui operations."""
 
-    def __init__(self, region: str = "us-east-1"):
+    def __init__(self, region: str = "us-east-1", table_prefix: str = "bunsui"):
         """Initialize DynamoDB client."""
         self.aws_client = AWSClient("dynamodb", region)
         self.region = region
+        self.table_prefix = table_prefix
 
     def create_table(self, table_name: TableName) -> Dict[str, Any]:
         """Create a DynamoDB table based on schema definition."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -68,7 +69,7 @@ class DynamoDBClient:
 
     def delete_table(self, table_name: TableName) -> Dict[str, Any]:
         """Delete a DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -76,7 +77,7 @@ class DynamoDBClient:
 
     def describe_table(self, table_name: TableName) -> Dict[str, Any]:
         """Describe a DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -84,7 +85,7 @@ class DynamoDBClient:
 
     def put_item(self, table_name: TableName, item: Dict[str, Any]) -> Dict[str, Any]:
         """Put an item into DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -96,7 +97,7 @@ class DynamoDBClient:
         self, table_name: TableName, key: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Get an item from DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -114,7 +115,7 @@ class DynamoDBClient:
         expression_attribute_values: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update an item in DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -133,7 +134,7 @@ class DynamoDBClient:
 
     def delete_item(self, table_name: TableName, key: Dict[str, Any]) -> Dict[str, Any]:
         """Delete an item from DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -153,7 +154,7 @@ class DynamoDBClient:
         scan_index_forward: bool = True,
     ) -> Dict[str, Any]:
         """Query items from DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
@@ -185,7 +186,7 @@ class DynamoDBClient:
         limit: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Scan items from DynamoDB table."""
-        schema = get_table_schema(table_name)
+        schema = get_table_schema(table_name, self.table_prefix)
         if not schema:
             raise ValidationError(f"Unknown table: {table_name}")
 
