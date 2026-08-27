@@ -1,0 +1,8 @@
+# Local DuckDB profile placeholder. Wired in a later phase.
+sample_project:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../.bunsui/warehouse.duckdb'
+      threads: 4

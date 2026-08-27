@@ -1,0 +1,12 @@
+{
+  "name": "bunsui-web",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "bun run --filter @bunsui/api --filter @bunsui/ui --parallel --elide-lines=0 \"dev\"",
+    "dev:api": "bun run --filter @bunsui/api dev",
+    "dev:ui": "bun run --filter @bunsui/ui dev",
+    "test": "bun test apps/api",
+    "build": "bun run --filter @bunsui/ui build"
+  }
+}

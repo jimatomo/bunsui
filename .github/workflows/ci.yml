@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync (Python 3.14 via uv)
+        run: uv sync
+      - name: Test
+        run: uv run pytest -q
+      - name: Smoke init
+        run: |
+          uv run bunsui init /tmp/bunsui-ci --name ci
+          test -f /tmp/bunsui-ci/.bunsui/control.sqlite
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Test API
+        run: bun test
