@@ -75,11 +75,26 @@ describe("health / status", () => {
     expect(body.counts.assets).toBe(0);
   });
 
-  test("GET /api/jobs returns empty list", async () => {
+  test("GET /api/jobs includes last run fields when present", async () => {
+    const db = new Database(sqlitePath);
+    db.run(
+      `INSERT INTO jobs (id, name, job_type, execution_mode, enabled, created_at, updated_at)
+       VALUES ('j1', 'demo', 'python', 'sync', 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')`,
+    );
+    db.run(
+      `INSERT INTO job_runs (id, job_id, status, started_at, finished_at, created_at, updated_at)
+       VALUES ('r1', 'j1', 'succeeded', '2026-01-01T01:00:00+00:00', '2026-01-01T01:00:01+00:00',
+               '2026-01-01T01:00:00+00:00', '2026-01-01T01:00:01+00:00')`,
+    );
+    db.close();
+
     const app = createApp({ sqlitePath });
     const res = await app.request("/api/jobs");
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.jobs).toEqual([]);
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0].name).toBe("demo");
+    expect(body.jobs[0].last_run_status).toBe("succeeded");
+    expect(body.jobs[0].last_finished_at).toBe("2026-01-01T01:00:01+00:00");
   });
 });

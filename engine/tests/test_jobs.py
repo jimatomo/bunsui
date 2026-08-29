@@ -272,7 +272,10 @@ def test_init_layout_writes_jobs_dir(tmp_path: Path) -> None:
     assert cfg.get("jobs") in (None, [])
     assert (paths.jobs_dir / "example_dbt.yaml").is_file()
     assert (paths.jobs_dir / "example_python.yaml").is_file()
+    assert (paths.root / "sample.py").is_file()
 
     decls = load_declared_jobs(paths)
     assert {d.name for d in decls} == {"example_dbt", "example_python"}
     assert all(d.source.startswith("jobs/") for d in decls)
+    py = next(d for d in decls if d.name == "example_python")
+    assert py.config.get("callable") == "sample:main"

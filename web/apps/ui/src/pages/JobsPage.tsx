@@ -6,6 +6,8 @@ type Job = {
   job_type: string;
   execution_mode: string;
   enabled: number;
+  last_run_status?: string | null;
+  last_finished_at?: string | null;
 };
 
 export function JobsPage() {
@@ -23,8 +25,8 @@ export function JobsPage() {
       <h1>Jobs</h1>
       <p className="lede">
         Execution units from <code>jobs/*.yaml</code> (or inline{" "}
-        <code>jobs:</code>), synced with <code>bunsui job sync</code>. Running
-        jobs is not implemented yet.
+        <code>jobs:</code>). Sync with <code>bunsui job sync</code>; run a
+        python+sync job with <code>bunsui job run &lt;name&gt;</code>.
       </p>
       {jobs === null ? (
         <div className="empty">Loading…</div>
@@ -41,6 +43,8 @@ export function JobsPage() {
               <th>Type</th>
               <th>Mode</th>
               <th>Enabled</th>
+              <th>Last run</th>
+              <th>Finished</th>
             </tr>
           </thead>
           <tbody>
@@ -50,6 +54,8 @@ export function JobsPage() {
                 <td>{j.job_type}</td>
                 <td>{j.execution_mode}</td>
                 <td>{j.enabled ? "yes" : "no"}</td>
+                <td>{j.last_run_status ?? "—"}</td>
+                <td className="mono">{j.last_finished_at ?? "—"}</td>
               </tr>
             ))}
           </tbody>

@@ -1,7 +1,7 @@
 """Declare jobs in ``bunsui.yaml`` and/or ``jobs/*.yaml``, sync into SQLite.
 
-This module only syncs declarations into the ``jobs`` table. It does not run
-dbt, invoke Python callables, or write ``job_runs``.
+This module syncs declarations into the ``jobs`` table. Execution of python
+callables lives in ``bunsui.runner`` (``bunsui job run``).
 """
 
 from __future__ import annotations
@@ -275,7 +275,7 @@ def example_job_files() -> dict[str, dict[str, Any]]:
             "execution_mode": "sync",
             "depends_on": ["example_dbt"],
             "config": {
-                "callable": "my_module:main",
+                "callable": "sample:main",
             },
         },
     }

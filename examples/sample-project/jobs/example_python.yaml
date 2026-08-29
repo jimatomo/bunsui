@@ -5,4 +5,4 @@ execution_mode: sync
 depends_on:
 - example_dbt
 config:
-  callable: my_module:main
+  callable: sample:main

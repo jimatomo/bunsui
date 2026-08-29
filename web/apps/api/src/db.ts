@@ -11,6 +11,8 @@ export type JobRow = {
   job_type: string;
   execution_mode: string;
   enabled: number;
+  last_run_status?: string | null;
+  last_finished_at?: string | null;
   status?: string | null;
 };
 
@@ -73,7 +75,26 @@ export class ControlDb {
   listJobs(): JobRow[] {
     return this.db
       .query(
-        `SELECT id, name, job_type, execution_mode, enabled FROM jobs ORDER BY name`,
+        `SELECT
+           j.id,
+           j.name,
+           j.job_type,
+           j.execution_mode,
+           j.enabled,
+           (
+             SELECT r.status FROM job_runs r
+             WHERE r.job_id = j.id
+             ORDER BY r.created_at DESC
+             LIMIT 1
+           ) AS last_run_status,
+           (
+             SELECT r.finished_at FROM job_runs r
+             WHERE r.job_id = j.id
+             ORDER BY r.created_at DESC
+             LIMIT 1
+           ) AS last_finished_at
+         FROM jobs j
+         ORDER BY j.name`,
       )
       .all() as JobRow[];
   }

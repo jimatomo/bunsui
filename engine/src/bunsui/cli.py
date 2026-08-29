@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync`` / ``bunsui schema``."""
+"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync|run`` / ``bunsui schema``."""
 
 from __future__ import annotations
 
@@ -32,7 +32,10 @@ def init_cmd(path: str | None, name: str | None, force: bool) -> None:
     click.echo(f"  dbt:      {paths.dbt_dir}")
     click.echo(f"  artifacts:{paths.artifacts_dir}")
     click.echo(f"  logs:     {paths.logs_dir}")
-    click.echo("Next: edit jobs/ (or inline jobs:), then `bunsui job sync --project …`")
+    click.echo(
+        "Next: edit jobs/, then `bunsui job sync` / "
+        "`bunsui job run example_python --project …`"
+    )
 
 
 @main.command("schema")
@@ -60,7 +63,7 @@ def schema_cmd(project_path: str) -> None:
 
 @main.group("job")
 def job_group() -> None:
-    """Manage job declarations (yaml → SQLite)."""
+    """Manage and run jobs (yaml → SQLite → python sync run)."""
 
 
 @job_group.command("sync")
@@ -73,7 +76,7 @@ def job_group() -> None:
     help="Project directory containing bunsui.yaml",
 )
 def job_sync_cmd(project_path: str) -> None:
-    """Upsert jobs from bunsui.yaml into SQLite (idempotent; does not run jobs)."""
+    """Upsert jobs from yaml into SQLite (idempotent; does not run jobs)."""
     from bunsui.jobs import sync_jobs
     from bunsui.paths import resolve_project
 
@@ -82,6 +85,48 @@ def job_sync_cmd(project_path: str) -> None:
     click.echo(
         f"Jobs synced for {paths.root}: "
         f"created={result.created} updated={result.updated} disabled={result.disabled}"
+    )
+
+
+@job_group.command("run")
+@click.argument("job_name")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project directory containing bunsui.yaml",
+)
+@click.option(
+    "--no-sync",
+    is_flag=True,
+    help="Skip yaml→SQLite sync before running (job must already exist)",
+)
+def job_run_cmd(job_name: str, project_path: str, no_sync: bool) -> None:
+    """Run one python+sync job and write a ``job_runs`` row.
+
+    Syncs yaml declarations first (unless ``--no-sync``). Does not walk
+    ``depends_on``. dbt / async jobs are rejected with a clear error.
+    """
+    from bunsui.paths import resolve_project
+    from bunsui.runner import JobRunError, run_job
+
+    paths = resolve_project(project_path)
+    try:
+        result = run_job(paths, job_name, sync_first=not no_sync)
+    except JobRunError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if result.status == "succeeded":
+        click.echo(
+            f"Job {result.job_name!r} succeeded (run_id={result.run_id})"
+        )
+        return
+
+    raise click.ClickException(
+        f"Job {result.job_name!r} failed (run_id={result.run_id}): "
+        f"{result.error_message}"
     )
 
 
