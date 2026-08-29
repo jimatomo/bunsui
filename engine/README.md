@@ -8,5 +8,6 @@ Requires **Python ≥ 3.14** (installed via `uv`).
 cd engine
 uv sync
 uv run bunsui --help
+uv run bunsui job sync --project ../examples/sample-project
 uv run pytest
 ```

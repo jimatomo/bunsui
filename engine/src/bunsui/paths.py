@@ -6,6 +6,7 @@ A bunsui project is a directory containing ``bunsui.yaml`` plus reserved paths:
 
     my-project/
       bunsui.yaml          # project config
+      jobs/                # split job declarations (*.yaml); optional inline jobs: too
       .bunsui/
         control.sqlite     # SQLite control plane (jobs / assets / runs)
         warehouse.duckdb   # DuckDB warehouse (load/query not implemented yet)
@@ -26,6 +27,7 @@ DUCKDB_FILENAME = "warehouse.duckdb"
 DBT_DIRNAME = "dbt"
 ARTIFACTS_DIRNAME = "artifacts"
 LOGS_DIRNAME = "logs"
+JOBS_DIRNAME = "jobs"
 
 
 @dataclass(frozen=True)
@@ -62,12 +64,17 @@ class ProjectPaths:
     def logs_dir(self) -> Path:
         return self.root / LOGS_DIRNAME
 
+    @property
+    def jobs_dir(self) -> Path:
+        return self.root / JOBS_DIRNAME
+
     def ensure_dirs(self) -> None:
         """Create directories that the engine expects to exist."""
         self.meta_dir.mkdir(parents=True, exist_ok=True)
         self.dbt_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs_dir.mkdir(parents=True, exist_ok=True)
 
 
 def resolve_project(path: Path | str | None = None) -> ProjectPaths:
