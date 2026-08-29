@@ -1,0 +1,8 @@
+# Local DuckDB profile for dbt (execution not wired yet).
+sample_project:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../.bunsui/warehouse.duckdb'
+      threads: 4

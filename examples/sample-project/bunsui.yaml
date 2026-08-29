@@ -1,0 +1,15 @@
+# bunsui project config
+# Job = execution unit (dbt or Python). Asset = Dagster-style status unit.
+# Async job completion is detected by polling SQLite status writes.
+name: sample-project
+version: 1
+paths:
+  meta_dir: .bunsui
+  sqlite: .bunsui/control.sqlite
+  duckdb: .bunsui/warehouse.duckdb
+  dbt: dbt
+  artifacts: artifacts
+  logs: logs
+artifact_retention_days: 30
+defaults:
+  job_execution_mode: sync

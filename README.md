@@ -1,180 +1,107 @@
-# Bunsui
+# bunsui
 
-OSS TUI Data Pipeline Management Tool
+ローカル完結のデータ基盤。
 
-## Overview
-
-Bunsuiは、AWSサービスと統合されたデータパイプライン管理ツールです。直感的なTUI（Terminal User Interface）を通じて、複雑なデータパイプラインの構築、実行、監視を行うことができます。
-
-## Features
-
-- **Visual Pipeline Builder**: TUIを使用したビジュアルなパイプライン構築
-- **AWS Integration**: Step Functions、Lambda、ECS、DynamoDB、S3との統合
-- **Real-time Monitoring**: パイプライン実行状況のリアルタイム監視
-- **Session Management**: パイプライン実行セッションの管理とチェックポイント機能
-- **Error Handling**: 包括的なエラーハンドリングとリカバリー機能
+**DuckDB** をウェアハウス、**dbt** を変換レイヤ、**SQLite** をコントロールプレーン（ジョブ / アセット状態）として使うローカルデータプラットフォームです。
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│       TUI       │    │   Core Models   │    │  AWS Services   │
-│                 │    │                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ Pipeline  │  │◄──►│  │ Session   │  │◄──►│  │ DynamoDB  │  │
-│  │ Builder   │  │    │  │ Manager   │  │    │  │           │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │    │                 │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ Monitor   │  │◄──►│  │ Pipeline  │  │◄──►│  │    S3     │  │
-│  │ Dashboard │  │    │  │ DAG       │  │    │  │           │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌──────────────────┐     HTTP      ┌──────────────────┐
+│  React UI (web)  │◄─────────────►│  Hono API (web)  │
+└──────────────────┘               └────────┬─────────┘
+                                            │ read
+                                            ▼
+                                   ┌──────────────────┐
+                                   │ SQLite control   │
+                                   │ jobs / assets /  │
+                                   │ runs / logs …    │
+                                   └────────▲─────────┘
+                                            │ write
+┌──────────────────┐                        │
+│  Python engine   │────────────────────────┘
+│  (uv / 3.14+)    │──── DuckDB warehouse
+│                  │──── dbt project dir
+└──────────────────┘
 ```
 
-## Installation
+### Product rules
+
+- **Job** = 実行単位（dbt コマンドまたは任意の Python）。順序付き依存を持てる。チェインは sync / async。async 完了は **SQLite のステータス書き込みをポーリング**して検知する。
+- **Asset** = Dagster 風の状態単位（SQLite）。dbt アセットは `run_results.json` の全ノードから作る。モデルに紐づくテストは親モデルの子（`parent_asset_id`）。テスト失敗は親モデルアセットのエラーとして扱う。
+- dbt 取り込みの正は **`run_results.json`**。一定期間保持し、stdout ログもランに紐づけて UI 向けに保存する。stdout の増分 SQLite パースは任意の拡張として検討する。
+
+## Layout
+
+```
+engine/                 # Python package (uv, requires-python >=3.14)
+web/                    # bun workspace: apps/api (Hono) + apps/ui (React)
+examples/sample-project # bunsui init で作ったサンプル
+```
+
+### bunsui プロジェクトの置き場
+
+```
+my-project/
+  bunsui.yaml              # 設定
+  .bunsui/
+    control.sqlite         # コントロールプレーン
+    warehouse.duckdb       # DuckDB ウェアハウス（ロード/クエリは未実装）
+  dbt/                     # dbt プロジェクト
+  artifacts/               # run_results.json など保持
+  logs/                    # ランごとの stdout など
+```
+
+## Quick start
 
 ### Prerequisites
 
-- Python 3.8+
-- AWS CLI configured
-- AWS credentials
+- [uv](https://docs.astral.sh/uv/)（Python **3.14** を自動取得）
+- [bun](https://bun.sh/) 1.x
 
-### Install from PyPI
+システムに 3.14 が無くても、`uv` が 3.14 をダウンロードします。`requires-python` は `>=3.14` です。
 
-```bash
-pip install bunsui
-```
-
-### Install from source
+### Engine
 
 ```bash
-git clone https://github.com/bunsui/bunsui.git
-cd bunsui
-pip install -e .
+cd engine
+uv sync
+uv run bunsui init ../my-project --name my-project
+uv run bunsui schema --project ../my-project
+uv run pytest
 ```
 
-### Development setup
+### Web
 
 ```bash
-git clone https://github.com/bunsui/bunsui.git
-cd bunsui
-make install-dev
-# or manually:
-# pip install -e ".[dev]"
-# pre-commit install
+cd web
+bun install
+
+# サンプル（または自分で init した）プロジェクトの SQLite を読む
+export BUNSUI_PROJECT="$(pwd)/../examples/sample-project"
+bun run dev
+# API http://localhost:8787  /  UI http://localhost:5173
+bun test
 ```
 
-## Usage
-
-### Basic Pipeline Creation
+単体起動:
 
 ```bash
-# Create a new pipeline
-bunsui create pipeline my-data-pipeline
-
-# Run pipeline
-bunsui run my-data-pipeline
-
-# Monitor running pipelines
-bunsui monitor
+bun run dev:api
+bun run dev:ui
 ```
 
-### TUI Interface
+## Roadmap
 
-Launch the TUI interface:
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs / Assets / Logs）、テストと CI。
 
-```bash
-bunsui tui
-```
+**これから実装するもの:**
 
-## Project Structure
-
-```
-src/bunsui/                 # Main package (src layout for PyPI)
-├── core/                   # Core business logic
-│   ├── models/             # Data models
-│   ├── session/            # Session management
-│   ├── pipeline/           # Pipeline management
-│   └── storage/            # Storage interfaces
-├── aws/                    # AWS service integrations
-│   ├── dynamodb/           # DynamoDB client
-│   ├── s3/                 # S3 client
-│   └── stepfunctions/      # Step Functions client
-├── tui/                    # Terminal UI components
-└── cli/                    # Command-line interface
-tests/                      # Test suite
-docs/                       # Documentation
-examples/                   # Usage examples
-```
-
-## Development
-
-### Running Tests
-
-```bash
-# Run all tests
-make test
-
-# Run with coverage
-make test-cov
-
-# Or manually:
-pytest
-pytest --cov=src/bunsui
-```
-
-### Code Quality
-
-```bash
-# Format code
-make format
-
-# Check formatting
-make format-check
-
-# Run linting
-make lint
-
-# Type checking
-make type-check
-
-# Run all checks
-make check-all
-```
-
-### Building and Publishing
-
-```bash
-# Build distribution packages
-make build
-
-# Check distribution
-make check-dist
-
-# Upload to Test PyPI
-make upload-test
-
-# Upload to PyPI
-make upload
-```
-
-For detailed publishing instructions, see [docs/PUBLISHING.md](docs/PUBLISHING.md).
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
+- dbt CLI 実行・リトライ・`run_results.json` 取り込み・stdout の増分パース
+- ジョブランナー（sync/async、Python callable、ポーリングループ）
+- CSV/Parquet の DuckDB ロード
+- 本番スケジューリング
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Development Status
-
-This project is currently in active development. See the [development notes](dev_note/) for current progress and roadmap.
+MIT — see [LICENSE](LICENSE).
