@@ -43,7 +43,7 @@ examples/sample-project # bunsui init で作ったサンプル
 
 ```
 my-project/
-  bunsui.yaml              # 設定
+  bunsui.yaml              # 設定（jobs: でジョブ宣言）
   .bunsui/
     control.sqlite         # コントロールプレーン
     warehouse.duckdb       # DuckDB ウェアハウス（ロード/クエリは未実装）
@@ -51,6 +51,29 @@ my-project/
   artifacts/               # run_results.json など保持
   logs/                    # ランごとの stdout など
 ```
+
+### Jobs in `bunsui.yaml`
+
+`jobs:` に実行単位を宣言し、`bunsui job sync` で SQLite の `jobs` テーブルへ反映します（実行はしません）。
+
+```yaml
+jobs:
+  - name: example_dbt
+    type: dbt          # dbt | python
+    execution_mode: sync  # sync | async
+    depends_on: []     # 他ジョブ名（DAG 実行は未実装・JSON として保存のみ）
+    config:
+      command: run
+      select: example
+  - name: example_python
+    type: python
+    execution_mode: sync
+    depends_on: [example_dbt]
+    config:
+      callable: my_module:main
+```
+
+yaml から外したジョブは削除せず `enabled=0` にします。
 
 ## Quick start
 
@@ -67,6 +90,7 @@ my-project/
 cd engine
 uv sync
 uv run bunsui init ../my-project --name my-project
+uv run bunsui job sync --project ../my-project
 uv run bunsui schema --project ../my-project
 uv run pytest
 ```
@@ -93,12 +117,13 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`（yaml → SQLite）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
+- Python ジョブの実行（callable）
 - dbt CLI 実行・リトライ・`run_results.json` 取り込み・stdout の増分パース
-- ジョブランナー（sync/async、Python callable、ポーリングループ）
+- ジョブランナー（sync/async、依存チェイン、ポーリングループ）
 - CSV/Parquet の DuckDB ロード
 - 本番スケジューリング
 

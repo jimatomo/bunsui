@@ -49,8 +49,14 @@ def test_init_project_layout(tmp_path: Path) -> None:
     assert paths.artifacts_dir.is_dir()
     assert paths.logs_dir.is_dir()
 
+    from bunsui.config import load_config
+
+    cfg = load_config(paths)
+    assert isinstance(cfg.get("jobs"), list)
+    assert len(cfg["jobs"]) >= 2
+
     with connect(paths.sqlite_path) as conn:
         verify_schema(conn)
-        # Empty tables are expected before jobs/assets are registered
+        # Jobs land in SQLite only after `bunsui job sync`
         assert conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"] == 0
         assert conn.execute("SELECT COUNT(*) AS c FROM assets").fetchone()["c"] == 0

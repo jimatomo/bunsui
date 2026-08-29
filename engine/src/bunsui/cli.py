@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``bunsui init`` / ``bunsui version``."""
+"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync`` / ``bunsui schema``."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def init_cmd(path: str | None, name: str | None, force: bool) -> None:
     click.echo(f"  dbt:      {paths.dbt_dir}")
     click.echo(f"  artifacts:{paths.artifacts_dir}")
     click.echo(f"  logs:     {paths.logs_dir}")
+    click.echo("Next: edit jobs in bunsui.yaml, then `bunsui job sync --project …`")
 
 
 @main.command("schema")
@@ -55,6 +56,33 @@ def schema_cmd(project_path: str) -> None:
         tables = list_tables(conn)
     click.echo(f"SQLite ready: {sqlite_path}")
     click.echo(f"Tables: {', '.join(tables)}")
+
+
+@main.group("job")
+def job_group() -> None:
+    """Manage job declarations (yaml → SQLite)."""
+
+
+@job_group.command("sync")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project directory containing bunsui.yaml",
+)
+def job_sync_cmd(project_path: str) -> None:
+    """Upsert jobs from bunsui.yaml into SQLite (idempotent; does not run jobs)."""
+    from bunsui.jobs import sync_jobs
+    from bunsui.paths import resolve_project
+
+    paths = resolve_project(project_path)
+    result = sync_jobs(paths)
+    click.echo(
+        f"Jobs synced for {paths.root}: "
+        f"created={result.created} updated={result.updated} disabled={result.disabled}"
+    )
 
 
 if __name__ == "__main__":

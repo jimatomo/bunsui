@@ -1,5 +1,6 @@
 # bunsui project config
 # Job = execution unit (dbt or Python). Asset = Dagster-style status unit.
+# Declare jobs under `jobs:` then materialize with `bunsui job sync`.
 # Async job completion is detected by polling SQLite status writes.
 name: sample-project
 version: 1
@@ -13,3 +14,18 @@ paths:
 artifact_retention_days: 30
 defaults:
   job_execution_mode: sync
+jobs:
+- name: example_dbt
+  type: dbt
+  execution_mode: sync
+  depends_on: []
+  config:
+    command: run
+    select: example
+- name: example_python
+  type: python
+  execution_mode: sync
+  depends_on:
+  - example_dbt
+  config:
+    callable: my_module:main

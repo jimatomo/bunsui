@@ -22,13 +22,16 @@ export function JobsPage() {
     <section>
       <h1>Jobs</h1>
       <p className="lede">
-        Execution units for dbt commands or arbitrary Python. Dependencies and
-        sync/async chaining are not implemented yet.
+        Execution units declared in <code>bunsui.yaml</code> and synced with{" "}
+        <code>bunsui job sync</code>. Running jobs is not implemented yet.
       </p>
       {jobs === null ? (
         <div className="empty">Loading…</div>
       ) : jobs.length === 0 ? (
-        <div className="empty">No jobs yet.</div>
+        <div className="empty">
+          No jobs yet. Add entries under <code>jobs:</code> in bunsui.yaml, then
+          run <code>bunsui job sync</code>.
+        </div>
       ) : (
         <table className="table">
           <thead>
