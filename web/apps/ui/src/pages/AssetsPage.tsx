@@ -29,7 +29,7 @@ export function AssetsPage() {
       {assets === null ? (
         <div className="empty">Loading…</div>
       ) : assets.length === 0 ? (
-        <div className="empty">No assets yet — Phase 0 placeholder.</div>
+        <div className="empty">No assets yet.</div>
       ) : (
         <table className="table">
           <thead>

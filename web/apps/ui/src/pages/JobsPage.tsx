@@ -22,13 +22,13 @@ export function JobsPage() {
     <section>
       <h1>Jobs</h1>
       <p className="lede">
-        Execution units (dbt or Python). Dependencies and sync/async chaining
-        land in a later phase.
+        Execution units for dbt commands or arbitrary Python. Dependencies and
+        sync/async chaining are not implemented yet.
       </p>
       {jobs === null ? (
         <div className="empty">Loading…</div>
       ) : jobs.length === 0 ? (
-        <div className="empty">No jobs yet — Phase 0 placeholder.</div>
+        <div className="empty">No jobs yet.</div>
       ) : (
         <table className="table">
           <thead>

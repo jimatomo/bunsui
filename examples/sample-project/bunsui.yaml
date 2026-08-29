@@ -1,4 +1,4 @@
-# bunsui project config (v2)
+# bunsui project config
 # Job = execution unit (dbt or Python). Asset = Dagster-style status unit.
 # Async job completion is detected by polling SQLite status writes.
 name: sample-project

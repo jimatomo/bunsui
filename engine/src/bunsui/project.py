@@ -27,7 +27,7 @@ clean-targets: ["target", "dbt_packages"]
 """
 
 DBT_PROFILES_STUB = """\
-# Local DuckDB profile placeholder. Wired in a later phase.
+# Local DuckDB profile for dbt (execution not wired yet).
 {name}:
   target: dev
   outputs:
@@ -38,7 +38,7 @@ DBT_PROFILES_STUB = """\
 """
 
 DBT_MODEL_STUB = """\
--- Example model placeholder (not executed in Phase 0).
+-- Example model (dbt run not implemented yet).
 select 1 as id
 """
 
@@ -63,7 +63,7 @@ def init_project(
     paths.ensure_dirs()
     write_config(paths.config_file, default_config(project_name))
 
-    # Reserve DuckDB warehouse file path (touch empty file; load/query later).
+    # Reserve DuckDB warehouse file path (load/query not implemented yet).
     if not paths.duckdb_path.exists():
         paths.duckdb_path.touch()
 

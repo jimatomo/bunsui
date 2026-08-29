@@ -3,7 +3,7 @@
  *
  * Reads the bunsui SQLite control plane for job/asset status.
  * The Python engine owns writes (execution, DuckDB, schema init).
- * Later: async job completion is detected by polling SQLite status.
+ * Async job completion is detected by polling SQLite status.
  */
 
 import { Hono } from "hono";
@@ -101,11 +101,11 @@ export function createApp(options?: {
   app.get("/api/logs", (c) => {
     const control = c.get("db");
     if (!control) {
-      return c.json({ logs: [], note: "sqlite unavailable — placeholder" });
+      return c.json({ logs: [], note: "sqlite unavailable" });
     }
     return c.json({
       logs: control.listLogs(),
-      note: "Stdout tailing / incremental parse is a later phase",
+      note: "Log tailing is not implemented yet",
     });
   });
 

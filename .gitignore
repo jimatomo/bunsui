@@ -61,6 +61,6 @@ examples/**/artifacts/*
 # Ignore ad-hoc projects at repo root
 /my-project/
 
-# Old AWS-era leftovers (if any)
+# Optional local tooling paths
 .localstack/
 .aws-sam/

@@ -8,7 +8,7 @@ A bunsui project is a directory containing ``bunsui.yaml`` plus reserved paths:
       bunsui.yaml          # project config
       .bunsui/
         control.sqlite     # SQLite control plane (jobs / assets / runs)
-        warehouse.duckdb   # DuckDB warehouse (path reserved; load/query later)
+        warehouse.duckdb   # DuckDB warehouse (load/query not implemented yet)
       dbt/                 # dbt project directory
       artifacts/           # retained run_results.json etc.
       logs/                # stdout / stderr log files per job run

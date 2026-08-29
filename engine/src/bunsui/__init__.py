@@ -1,6 +1,6 @@
 """bunsui engine — local data platform control plane + warehouse helpers.
 
-Product rules (keep later phases consistent):
+Product rules (keep implementations consistent):
 - Job = execution unit (dbt command or arbitrary Python). Jobs may have ordered
   dependencies; chaining can be sync or async; async completion is detected by
   polling SQLite status writes.

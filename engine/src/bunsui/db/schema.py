@@ -1,17 +1,18 @@
 """SQLite control-plane schema.
 
-Tables anticipate later phases (dbt execution, job DAG, asset ingest) even when
-unused in Phase 0. See module docstring in ``bunsui`` for product rules.
+Tables cover jobs, assets, runs, logs, and artifacts for the full product.
+Some columns and tables are unused until execution and ingest are implemented.
+See module docstring in ``bunsui`` for product rules.
 
-Status polling model (later): async jobs complete by writing status into
-``job_runs`` / ``assets``; the web API and runners poll SQLite.
+Async jobs complete by writing status into ``job_runs`` / ``assets``; the web
+API and runners poll SQLite.
 """
 
 from __future__ import annotations
 
 SCHEMA_VERSION = 1
 
-# Product notes embedded next to DDL for future phases:
+# Product notes embedded next to DDL:
 # - assets.parent_asset_id: dbt tests are children of their model asset;
 #   a test failure should surface as an error on the parent model.
 # - jobs.execution_mode: 'sync' waits for completion; 'async' returns after

@@ -31,9 +31,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "artifacts": ARTIFACTS_DIRNAME,
         "logs": LOGS_DIRNAME,
     },
-    # Retention for run_results.json and similar (days). Enforced in later phases.
+    # Retention for run_results.json and similar (days). Enforced by the engine when implemented.
     "artifact_retention_days": 30,
-    # Job / asset execution notes for later phases (documented defaults).
+    # Documented defaults for job execution.
     "defaults": {
         "job_execution_mode": "sync",  # sync | async
     },
@@ -49,7 +49,7 @@ def default_config(name: str = "bunsui-project") -> dict[str, Any]:
 def write_config(path: Path, config: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     header = (
-        "# bunsui project config (v2)\n"
+        "# bunsui project config\n"
         "# Job = execution unit (dbt or Python). Asset = Dagster-style status unit.\n"
         "# Async job completion is detected by polling SQLite status writes.\n"
     )

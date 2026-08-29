@@ -1,6 +1,6 @@
 # bunsui web
 
-Bun workspace: Hono API (`apps/api`) + React UI (`apps/ui`).
+Bun workspace for the bunsui HTTP API (Hono) and React UI.
 
 ```bash
 cd web

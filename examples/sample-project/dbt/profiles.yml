@@ -1,4 +1,4 @@
-# Local DuckDB profile placeholder. Wired in a later phase.
+# Local DuckDB profile for dbt (execution not wired yet).
 sample_project:
   target: dev
   outputs:

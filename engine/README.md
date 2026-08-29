@@ -1,6 +1,6 @@
 # bunsui engine
 
-Python control plane for [bunsui](https://github.com/jimatomo/bunsui) v2.
+Python control plane for [bunsui](https://github.com/jimatomo/bunsui).
 
 Requires **Python ≥ 3.14** (installed via `uv`).
 

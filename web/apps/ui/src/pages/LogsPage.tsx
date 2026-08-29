@@ -25,14 +25,14 @@ export function LogsPage() {
     <section>
       <h1>Logs</h1>
       <p className="lede">
-        Stdout log paths tied to job runs. Incremental stdout-to-SQLite parse is
-        optional and later.
+        Stdout log paths tied to job runs. Log tailing in the UI is not
+        implemented yet.
       </p>
       {note ? <p className="lede mono">{note}</p> : null}
       {logs === null ? (
         <div className="empty">Loading…</div>
       ) : logs.length === 0 ? (
-        <div className="empty">No logs yet — Phase 0 placeholder.</div>
+        <div className="empty">No logs yet.</div>
       ) : (
         <table className="table">
           <thead>

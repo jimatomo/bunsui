@@ -1,4 +1,4 @@
-"""Engine unit tests — Phase 0: schema init and project bootstrap."""
+"""Engine unit tests for schema init and project bootstrap."""
 
 from __future__ import annotations
 
@@ -51,6 +51,6 @@ def test_init_project_layout(tmp_path: Path) -> None:
 
     with connect(paths.sqlite_path) as conn:
         verify_schema(conn)
-        # Empty tables are OK in Phase 0
+        # Empty tables are expected before jobs/assets are registered
         assert conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"] == 0
         assert conn.execute("SELECT COUNT(*) AS c FROM assets").fetchone()["c"] == 0

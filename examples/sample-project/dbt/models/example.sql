@@ -1,2 +1,2 @@
--- Example model placeholder (not executed in Phase 0).
+-- Example model (dbt run not implemented yet).
 select 1 as id
