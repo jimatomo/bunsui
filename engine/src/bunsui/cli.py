@@ -32,7 +32,7 @@ def init_cmd(path: str | None, name: str | None, force: bool) -> None:
     click.echo(f"  dbt:      {paths.dbt_dir}")
     click.echo(f"  artifacts:{paths.artifacts_dir}")
     click.echo(f"  logs:     {paths.logs_dir}")
-    click.echo("Next: edit jobs in bunsui.yaml, then `bunsui job sync --project …`")
+    click.echo("Next: edit jobs/ (or inline jobs:), then `bunsui job sync --project …`")
 
 
 @main.command("schema")

@@ -43,7 +43,8 @@ examples/sample-project # bunsui init で作ったサンプル
 
 ```
 my-project/
-  bunsui.yaml              # 設定（jobs: でジョブ宣言）
+  bunsui.yaml              # プロジェクト設定（小さな案件は inline jobs: も可）
+  jobs/                    # ジョブ宣言（*.yaml / *.yml）
   .bunsui/
     control.sqlite         # コントロールプレーン
     warehouse.duckdb       # DuckDB ウェアハウス（ロード/クエリは未実装）
@@ -52,28 +53,22 @@ my-project/
   logs/                    # ランごとの stdout など
 ```
 
-### Jobs in `bunsui.yaml`
+### Jobs
 
-`jobs:` に実行単位を宣言し、`bunsui job sync` で SQLite の `jobs` テーブルへ反映します（実行はしません）。
+ジョブは **`jobs/*.yaml`** に分割して置くのが基本です（`bunsui init` もこの形）。小さな案件向けに `bunsui.yaml` の inline `jobs:` も使えます。どちらも `bunsui job sync` で SQLite の `jobs` テーブルへ反映します（実行はしません）。
 
 ```yaml
-jobs:
-  - name: example_dbt
-    type: dbt          # dbt | python
-    execution_mode: sync  # sync | async
-    depends_on: []     # 他ジョブ名（DAG 実行は未実装・JSON として保存のみ）
-    config:
-      command: run
-      select: example
-  - name: example_python
-    type: python
-    execution_mode: sync
-    depends_on: [example_dbt]
-    config:
-      callable: my_module:main
+# jobs/example_dbt.yaml — 1 ファイル = 1 ジョブ（推奨）
+name: example_dbt
+type: dbt          # dbt | python
+execution_mode: sync  # sync | async
+depends_on: []     # 他ジョブ名（DAG 実行は未実装・JSON として保存のみ）
+config:
+  command: run
+  select: example
 ```
 
-yaml から外したジョブは削除せず `enabled=0` にします。
+ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
 ## Quick start
 

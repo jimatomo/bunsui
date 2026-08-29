@@ -6,6 +6,7 @@ from pathlib import Path
 
 from bunsui.config import default_config, write_config
 from bunsui.db import bootstrap_sqlite
+from bunsui.jobs import write_example_job_files
 from bunsui.paths import ProjectPaths, resolve_project
 
 
@@ -62,6 +63,7 @@ def init_project(
 
     paths.ensure_dirs()
     write_config(paths.config_file, default_config(project_name))
+    write_example_job_files(paths.jobs_dir)
 
     # Reserve DuckDB warehouse file path (load/query not implemented yet).
     if not paths.duckdb_path.exists():

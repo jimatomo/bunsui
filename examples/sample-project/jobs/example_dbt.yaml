@@ -1,0 +1,8 @@
+# bunsui job declaration (synced with `bunsui job sync`)
+name: example_dbt
+type: dbt
+execution_mode: sync
+depends_on: []
+config:
+  command: run
+  select: example

@@ -12,6 +12,7 @@ from bunsui.paths import (
     ARTIFACTS_DIRNAME,
     DBT_DIRNAME,
     DUCKDB_FILENAME,
+    JOBS_DIRNAME,
     LOGS_DIRNAME,
     META_DIRNAME,
     ProjectPaths,
@@ -30,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dbt": DBT_DIRNAME,
         "artifacts": ARTIFACTS_DIRNAME,
         "logs": LOGS_DIRNAME,
+        "jobs": JOBS_DIRNAME,
     },
     # Retention for run_results.json and similar (days). Enforced by the engine when implemented.
     "artifact_retention_days": 30,
@@ -41,11 +43,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 def default_config(name: str = "bunsui-project") -> dict[str, Any]:
-    from bunsui.jobs import example_jobs
-
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg["name"] = name
-    cfg["jobs"] = example_jobs()
     return cfg
 
 
@@ -54,7 +53,7 @@ def write_config(path: Path, config: dict[str, Any]) -> None:
     header = (
         "# bunsui project config\n"
         "# Job = execution unit (dbt or Python). Asset = Dagster-style status unit.\n"
-        "# Declare jobs under `jobs:` then materialize with `bunsui job sync`.\n"
+        "# Prefer jobs/*.yaml; optional inline jobs: also works. Sync with `bunsui job sync`.\n"
         "# Async job completion is detected by polling SQLite status writes.\n"
     )
     path.write_text(header + yaml.safe_dump(config, sort_keys=False), encoding="utf-8")

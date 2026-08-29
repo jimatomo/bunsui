@@ -22,15 +22,16 @@ export function JobsPage() {
     <section>
       <h1>Jobs</h1>
       <p className="lede">
-        Execution units declared in <code>bunsui.yaml</code> and synced with{" "}
-        <code>bunsui job sync</code>. Running jobs is not implemented yet.
+        Execution units from <code>jobs/*.yaml</code> (or inline{" "}
+        <code>jobs:</code>), synced with <code>bunsui job sync</code>. Running
+        jobs is not implemented yet.
       </p>
       {jobs === null ? (
         <div className="empty">Loading…</div>
       ) : jobs.length === 0 ? (
         <div className="empty">
-          No jobs yet. Add entries under <code>jobs:</code> in bunsui.yaml, then
-          run <code>bunsui job sync</code>.
+          No jobs yet. Add <code>jobs/*.yaml</code> (or inline{" "}
+          <code>jobs:</code>), then run <code>bunsui job sync</code>.
         </div>
       ) : (
         <table className="table">

@@ -52,8 +52,10 @@ def test_init_project_layout(tmp_path: Path) -> None:
     from bunsui.config import load_config
 
     cfg = load_config(paths)
-    assert isinstance(cfg.get("jobs"), list)
-    assert len(cfg["jobs"]) >= 2
+    assert "jobs" not in cfg or not cfg.get("jobs")
+    assert paths.jobs_dir.is_dir()
+    assert (paths.jobs_dir / "example_dbt.yaml").is_file()
+    assert (paths.jobs_dir / "example_python.yaml").is_file()
 
     with connect(paths.sqlite_path) as conn:
         verify_schema(conn)
