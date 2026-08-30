@@ -297,7 +297,9 @@ def _run_async_python(
     proc = ctx.Process(
         target=_async_worker,
         args=(sqlite_path, run_id, str(paths.root), str(callable_spec)),
-        daemon=True,
+        # Not a daemon: --no-wait returns while the parent exits; daemons are
+        # killed on parent exit and would never write terminal status to SQLite.
+        daemon=False,
     )
     proc.start()
 
