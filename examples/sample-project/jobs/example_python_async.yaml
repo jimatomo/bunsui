@@ -1,0 +1,7 @@
+# bunsui job declaration (synced with `bunsui job sync`)
+name: example_python_async
+type: python
+execution_mode: async
+depends_on: []
+config:
+  callable: sample:async_main

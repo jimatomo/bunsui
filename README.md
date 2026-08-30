@@ -70,10 +70,11 @@ config:
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
-`bunsui job run <name>` は yaml を sync したうえで、**python + sync** ジョブだけを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。dbt / async はエラーになります。サンプルの `example_python` はプロジェクト直下の `sample:main` を呼びます。
+`bunsui job run <name>` は yaml を sync したうえで **python** ジョブを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。**sync** は同一プロセス内で完結します。**async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（プロセス終了を正としません）。dbt はエラーになります。`--no-wait` で async ジョブを起動だけして戻ることもできます。サンプルの `example_python` / `example_python_async` はプロジェクト直下の `sample:main` / `sample:async_main` を呼びます。
 
 ```bash
 uv run bunsui job run example_python --project ../my-project
+uv run bunsui job run example_python_async --project ../my-project
 ```
 
 ## Quick start
@@ -119,11 +120,10 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（python + sync → `job_runs`）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（python sync / async → `job_runs`、async は SQLite ポーリング）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
-- async Python ジョブとポーリング
 - dbt CLI 実行・リトライ・`run_results.json` 取り込み・stdout の増分パース
 - 依存チェイン（`depends_on` の実行）
 - CSV/Parquet の DuckDB ロード

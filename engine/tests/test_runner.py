@@ -1,8 +1,9 @@
-"""Tests for ``bunsui job run`` (python + sync only)."""
+"""Tests for ``bunsui job run`` (python sync + async)."""
 
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,199 @@ def test_run_python_sync_records_failure(tmp_path: Path) -> None:
         assert row["finished_at"]
 
 
+def test_run_python_async_succeeds_via_sqlite_poll(tmp_path: Path) -> None:
+    root = tmp_path / "async_ok"
+    root.mkdir()
+    paths = init_project(root, name="async_ok")
+    _clear_jobs_dir(root)
+    (root / "slow.py").write_text(
+        "import time\n"
+        "def main():\n"
+        "    time.sleep(0.2)\n"
+        "    print('async ran')\n",
+        encoding="utf-8",
+    )
+    _write_job_file(
+        root,
+        "slow.yaml",
+        {
+            "name": "slow_job",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "slow:main"},
+        },
+    )
+
+    polled: list[str] = []
+    result = run_job(
+        paths,
+        "slow_job",
+        poll_interval=0.02,
+        polled_statuses=polled,
+    )
+    assert result.status == "succeeded"
+    assert "running" in polled
+    assert polled[-1] == "succeeded"
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status, finished_at FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "succeeded"
+        assert row["finished_at"]
+
+
+def test_run_python_async_records_failure(tmp_path: Path) -> None:
+    root = tmp_path / "async_fail"
+    root.mkdir()
+    paths = init_project(root, name="async_fail")
+    _clear_jobs_dir(root)
+    (root / "async_boom.py").write_text(
+        "def main():\n    raise ValueError('async boom')\n",
+        encoding="utf-8",
+    )
+    _write_job_file(
+        root,
+        "async_boom.yaml",
+        {
+            "name": "async_boom",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "async_boom:main"},
+        },
+    )
+
+    result = run_job(paths, "async_boom", poll_interval=0.02)
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "async boom" in result.error_message
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status, error_message FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "failed"
+        assert "async boom" in (row["error_message"] or "")
+
+
+def test_run_python_async_no_wait_returns_running(tmp_path: Path) -> None:
+    root = tmp_path / "async_nowait"
+    root.mkdir()
+    paths = init_project(root, name="async_nowait")
+    _clear_jobs_dir(root)
+    (root / "long.py").write_text(
+        "import time\n"
+        "def main():\n"
+        "    time.sleep(2)\n",
+        encoding="utf-8",
+    )
+    _write_job_file(
+        root,
+        "long.yaml",
+        {
+            "name": "long_job",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "long:main"},
+        },
+    )
+
+    result = run_job(paths, "long_job", wait=False)
+    assert result.status == "running"
+
+    deadline = time.monotonic() + 3.0
+    terminal = None
+    while time.monotonic() < deadline:
+        with connect(paths.sqlite_path) as conn:
+            row = conn.execute(
+                "SELECT status FROM job_runs WHERE id = ?",
+                (result.run_id,),
+            ).fetchone()
+        terminal = row["status"]
+        if terminal != "running":
+            break
+        time.sleep(0.05)
+    assert terminal == "succeeded"
+
+
+def test_run_python_async_dead_child_marks_failed(tmp_path: Path) -> None:
+    root = tmp_path / "async_dead"
+    root.mkdir()
+    paths = init_project(root, name="async_dead")
+    _clear_jobs_dir(root)
+    (root / "exit_now.py").write_text(
+        "import os\n"
+        "def main():\n"
+        "    os._exit(0)\n",
+        encoding="utf-8",
+    )
+    _write_job_file(
+        root,
+        "dead.yaml",
+        {
+            "name": "dead_job",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "exit_now:main"},
+        },
+    )
+
+    result = run_job(paths, "dead_job", poll_interval=0.02, timeout=1.0)
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "without writing terminal status" in result.error_message
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status, error_message, finished_at FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "failed"
+        assert row["finished_at"]
+
+
+def test_run_python_async_timeout_marks_failed(tmp_path: Path) -> None:
+    root = tmp_path / "async_timeout"
+    root.mkdir()
+    paths = init_project(root, name="async_timeout")
+    _clear_jobs_dir(root)
+    (root / "hang.py").write_text(
+        "import time\n"
+        "def main():\n"
+        "    time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    _write_job_file(
+        root,
+        "hang.yaml",
+        {
+            "name": "hang_job",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "hang:main"},
+        },
+    )
+
+    result = run_job(
+        paths,
+        "hang_job",
+        poll_interval=0.02,
+        timeout=0.15,
+    )
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "timed out" in result.error_message
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "failed"
+
+
 def test_run_rejects_dbt_without_run_row(tmp_path: Path) -> None:
     root = tmp_path / "dbt"
     root.mkdir()
@@ -124,31 +318,6 @@ def test_run_rejects_dbt_without_run_row(tmp_path: Path) -> None:
         assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
 
 
-def test_run_rejects_async_without_run_row(tmp_path: Path) -> None:
-    root = tmp_path / "async"
-    root.mkdir()
-    paths = init_project(root, name="async")
-    _clear_jobs_dir(root)
-    (root / "async_mod.py").write_text("def main():\n    pass\n", encoding="utf-8")
-    _write_job_file(
-        root,
-        "async.yaml",
-        {
-            "name": "async_job",
-            "type": "python",
-            "execution_mode": "async",
-            "config": {"callable": "async_mod:main"},
-        },
-    )
-    sync_jobs(paths)
-
-    with pytest.raises(JobRunError, match="only execution_mode=sync"):
-        run_job(paths, "async_job", sync_first=False)
-
-    with connect(paths.sqlite_path) as conn:
-        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
-
-
 def test_init_sample_callable_runs(tmp_path: Path) -> None:
     root = tmp_path / "demo"
     root.mkdir()
@@ -156,6 +325,22 @@ def test_init_sample_callable_runs(tmp_path: Path) -> None:
     assert (root / "sample.py").is_file()
 
     result = run_job(paths, "example_python")
+    assert result.status == "succeeded"
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status FROM job_runs WHERE id = ?", (result.run_id,)
+        ).fetchone()
+        assert row["status"] == "succeeded"
+
+
+def test_init_sample_async_callable_runs(tmp_path: Path) -> None:
+    root = tmp_path / "demo_async"
+    root.mkdir()
+    paths = init_project(root, name="demo_async")
+    assert (paths.jobs_dir / "example_python_async.yaml").is_file()
+
+    result = run_job(paths, "example_python_async", poll_interval=0.02)
     assert result.status == "succeeded"
 
     with connect(paths.sqlite_path) as conn:
