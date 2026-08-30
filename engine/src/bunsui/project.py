@@ -45,6 +45,14 @@ select 1 as id
 
 GITKEEP = ""
 
+SAMPLE_PYTHON_MODULE = """\
+\"\"\"Tiny sample callable for `bunsui job run example_python`.\"\"\"
+
+
+def main() -> None:
+    print("hello from sample:main")
+"""
+
 
 def init_project(
     path: Path | str | None = None,
@@ -64,6 +72,7 @@ def init_project(
     paths.ensure_dirs()
     write_config(paths.config_file, default_config(project_name))
     write_example_job_files(paths.jobs_dir)
+    (paths.root / "sample.py").write_text(SAMPLE_PYTHON_MODULE, encoding="utf-8")
 
     # Reserve DuckDB warehouse file path (load/query not implemented yet).
     if not paths.duckdb_path.exists():

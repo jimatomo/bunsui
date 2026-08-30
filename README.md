@@ -70,6 +70,12 @@ config:
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
+`bunsui job run <name>` は yaml を sync したうえで、**python + sync** ジョブだけを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。dbt / async はエラーになります。サンプルの `example_python` はプロジェクト直下の `sample:main` を呼びます。
+
+```bash
+uv run bunsui job run example_python --project ../my-project
+```
+
 ## Quick start
 
 ### Prerequisites
@@ -86,6 +92,7 @@ cd engine
 uv sync
 uv run bunsui init ../my-project --name my-project
 uv run bunsui job sync --project ../my-project
+uv run bunsui job run example_python --project ../my-project
 uv run bunsui schema --project ../my-project
 uv run pytest
 ```
@@ -112,13 +119,13 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`（yaml → SQLite）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（python + sync → `job_runs`）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
-- Python ジョブの実行（callable）
+- async Python ジョブとポーリング
 - dbt CLI 実行・リトライ・`run_results.json` 取り込み・stdout の増分パース
-- ジョブランナー（sync/async、依存チェイン、ポーリングループ）
+- 依存チェイン（`depends_on` の実行）
 - CSV/Parquet の DuckDB ロード
 - 本番スケジューリング
 

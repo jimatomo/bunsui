@@ -27,6 +27,8 @@ jobs:
           test -f /tmp/bunsui-ci/.bunsui/control.sqlite
           uv run bunsui job sync --project /tmp/bunsui-ci
           uv run python -c "import sqlite3; c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite'); n=c.execute('select count(*) from jobs where enabled=1').fetchone()[0]; assert n>=2, n"
+          uv run bunsui job run example_python --project /tmp/bunsui-ci
+          uv run python -c "import sqlite3; c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite'); r=c.execute(\"select status from job_runs order by created_at desc limit 1\").fetchone(); assert r and r[0]=='succeeded', r"
 
   web:
     runs-on: ubuntu-latest
