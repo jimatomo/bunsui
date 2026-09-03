@@ -278,6 +278,15 @@ def example_job_files() -> dict[str, dict[str, Any]]:
                 "callable": "sample:main",
             },
         },
+        "example_python_async.yaml": {
+            "name": "example_python_async",
+            "type": "python",
+            "execution_mode": "async",
+            "depends_on": [],
+            "config": {
+                "callable": "sample:async_main",
+            },
+        },
     }
 
 

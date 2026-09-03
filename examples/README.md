@@ -6,6 +6,7 @@
 cd engine
 uv run bunsui job sync --project ../examples/sample-project
 uv run bunsui job run example_python --project ../examples/sample-project
+uv run bunsui job run example_python_async --project ../examples/sample-project
 
 export BUNSUI_PROJECT="$(pwd)/../examples/sample-project"
 cd ../web && bun run dev:api

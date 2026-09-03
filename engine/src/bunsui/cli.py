@@ -63,7 +63,7 @@ def schema_cmd(project_path: str) -> None:
 
 @main.group("job")
 def job_group() -> None:
-    """Manage and run jobs (yaml → SQLite → python sync run)."""
+    """Manage and run jobs (yaml → SQLite → python sync/async run)."""
 
 
 @job_group.command("sync")
@@ -103,20 +103,36 @@ def job_sync_cmd(project_path: str) -> None:
     is_flag=True,
     help="Skip yaml→SQLite sync before running (job must already exist)",
 )
-def job_run_cmd(job_name: str, project_path: str, no_sync: bool) -> None:
-    """Run one python+sync job and write a ``job_runs`` row.
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="For async jobs: start the child and return while status is still running",
+)
+def job_run_cmd(
+    job_name: str, project_path: str, no_sync: bool, no_wait: bool
+) -> None:
+    """Run one python job and write a ``job_runs`` row.
 
-    Syncs yaml declarations first (unless ``--no-sync``). Does not walk
-    ``depends_on``. dbt / async jobs are rejected with a clear error.
+    Sync jobs run in-process. Async jobs spawn a child and complete when SQLite
+    status leaves ``running`` (poll). Syncs yaml first unless ``--no-sync``.
+    Does not walk ``depends_on``. dbt jobs are rejected.
     """
     from bunsui.paths import resolve_project
     from bunsui.runner import JobRunError, run_job
 
     paths = resolve_project(project_path)
     try:
-        result = run_job(paths, job_name, sync_first=not no_sync)
+        result = run_job(
+            paths, job_name, sync_first=not no_sync, wait=not no_wait
+        )
     except JobRunError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if result.status == "running":
+        click.echo(
+            f"Job {result.job_name!r} started (run_id={result.run_id}, status=running)"
+        )
+        return
 
     if result.status == "succeeded":
         click.echo(
