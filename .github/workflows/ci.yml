@@ -39,6 +39,12 @@ r=c.execute('select id, status from job_runs order by created_at desc limit 1').
 assert r and r[1]=='succeeded', r
 log=c.execute('select path from logs where job_run_id=?', (r[0],)).fetchone()
 assert log and log[0], log
+n=c.execute('select count(*) from assets').fetchone()[0]
+assert n>=1, n
+model=c.execute(\"select asset_key, status from assets where asset_type='model' limit 1\").fetchone()
+assert model and 'example' in model[0] and model[1]=='materialized', model
+art=c.execute('select path from artifacts where job_run_id=?', (r[0],)).fetchone()
+assert art and art[0], art
 "
 
   web:

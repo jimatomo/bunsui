@@ -4,5 +4,6 @@ type: dbt
 execution_mode: sync
 depends_on: []
 config:
-  command: run
+  # build runs the model and its attached tests (run_results → assets)
+  command: build
   select: example

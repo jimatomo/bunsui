@@ -64,13 +64,13 @@ type: dbt          # dbt | python
 execution_mode: sync  # sync | async
 depends_on: []     # 他ジョブ名（DAG 実行は未実装・JSON として保存のみ）
 config:
-  command: run
+  command: build   # run / build / test など
   select: example
 ```
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
-`bunsui job run <name>` は yaml を sync したうえで **python** または **dbt** ジョブを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけます。`--no-wait` で async python を起動だけして戻ることもできます。サンプルの `example_dbt` / `example_python` / `example_python_async` がそのまま動きます。
+`bunsui job run <name>` は yaml を sync したうえで **python** または **dbt** ジョブを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけ、成功・失敗いずれでも `target/run_results.json` を `artifacts/` に保持して **`assets` / `asset_materializations` に upsert** します。`--no-wait` で async python を起動だけして戻ることもできます。サンプルの `example_dbt`（`build` + `not_null` テスト）/ `example_python` / `example_python_async` がそのまま動きます。
 
 ```bash
 uv run bunsui job run example_dbt --project ../my-project
@@ -122,11 +122,11 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（python sync / async → `job_runs`、async は SQLite ポーリング）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
-- dbt CLI 実行・リトライ・`run_results.json` 取り込み・stdout の増分パース
+- dbt リトライ・stdout の増分パース
 - 依存チェイン（`depends_on` の実行）
 - CSV/Parquet の DuckDB ロード
 - 本番スケジューリング

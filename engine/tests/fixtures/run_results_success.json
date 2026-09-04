@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json"
+  },
+  "results": [
+    {
+      "status": "success",
+      "unique_id": "model.fx_demo.example",
+      "message": "OK",
+      "failures": null,
+      "relation_name": "\"warehouse\".\"main\".\"example\"",
+      "execution_time": 0.04725217819213867
+    },
+    {
+      "status": "pass",
+      "unique_id": "test.fx_demo.not_null_example_id.96691fbe5c",
+      "message": null,
+      "failures": 0,
+      "relation_name": null,
+      "execution_time": 0.023917198181152344
+    }
+  ],
+  "elapsed_time": 0.13001537322998047,
+  "args": {}
+}

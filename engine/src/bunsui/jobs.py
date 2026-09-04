@@ -265,7 +265,8 @@ def example_job_files() -> dict[str, dict[str, Any]]:
             "execution_mode": "sync",
             "depends_on": [],
             "config": {
-                "command": "run",
+                # build = model + attached tests (feeds run_results → assets)
+                "command": "build",
                 "select": "example",
             },
         },

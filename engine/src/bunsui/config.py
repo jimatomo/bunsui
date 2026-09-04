@@ -33,7 +33,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "logs": LOGS_DIRNAME,
         "jobs": JOBS_DIRNAME,
     },
-    # Retention for run_results.json and similar (days). Enforced by the engine when implemented.
+    # Retention for retained run_results.json copies under artifacts/ (days).
     "artifact_retention_days": 30,
     # Documented defaults for job execution.
     "defaults": {
