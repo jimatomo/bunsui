@@ -38,6 +38,7 @@ export type LogRow = {
   job_run_id: string;
   log_kind: string;
   path: string | null;
+  created_at?: string;
 };
 
 export class ControlDb {
@@ -120,9 +121,18 @@ export class ControlDb {
   listLogs(limit = 50): LogRow[] {
     return this.db
       .query(
-        `SELECT id, job_run_id, log_kind, path FROM logs ORDER BY created_at DESC LIMIT ?`,
+        `SELECT id, job_run_id, log_kind, path, created_at FROM logs ORDER BY created_at DESC LIMIT ?`,
       )
       .all(limit) as LogRow[];
+  }
+
+  getLog(id: string): LogRow | null {
+    const row = this.db
+      .query(
+        `SELECT id, job_run_id, log_kind, path, created_at FROM logs WHERE id = ?`,
+      )
+      .get(id) as LogRow | null;
+    return row ?? null;
   }
 
   close(): void {

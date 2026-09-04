@@ -1,8 +1,9 @@
-"""Tests for ``bunsui job run`` (python sync + async)."""
+"""Tests for ``bunsui job run`` (python sync/async + dbt sync)."""
 
 from __future__ import annotations
 
 import shutil
+import stat
 import time
 from pathlib import Path
 
@@ -11,9 +12,8 @@ import yaml
 
 from bunsui.config import load_config, write_config
 from bunsui.db import connect
-from bunsui.jobs import sync_jobs
 from bunsui.project import init_project
-from bunsui.runner import JobRunError, run_job
+from bunsui.runner import run_job
 
 
 def _clear_jobs_dir(root: Path) -> None:
@@ -28,6 +28,13 @@ def _write_job_file(root: Path, filename: str, body: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
 
+
+def _write_dbt_stub(directory: Path, script: str) -> str:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "dbt"
+    path.write_text(script, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return str(path)
 
 def test_run_python_sync_succeeds(tmp_path: Path) -> None:
     root = tmp_path / "ok"
@@ -294,11 +301,16 @@ def test_run_python_async_timeout_marks_failed(tmp_path: Path) -> None:
         assert row["status"] == "failed"
 
 
-def test_run_rejects_dbt_without_run_row(tmp_path: Path) -> None:
-    root = tmp_path / "dbt"
+def test_run_dbt_succeeds_and_stores_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "dbt_ok"
     root.mkdir()
-    paths = init_project(root, name="dbt")
+    paths = init_project(root, name="dbt_ok")
     _clear_jobs_dir(root)
+    stub = _write_dbt_stub(
+        tmp_path / "bin",
+        '#!/bin/sh\necho "Running with dbt stub"\necho "Done."\nexit 0\n',
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
     _write_job_file(
         root,
         "dbt.yaml",
@@ -306,16 +318,128 @@ def test_run_rejects_dbt_without_run_row(tmp_path: Path) -> None:
             "name": "dbt_job",
             "type": "dbt",
             "execution_mode": "sync",
-            "config": {"command": "run"},
+            "config": {"command": "run", "select": "example"},
         },
     )
-    sync_jobs(paths)
 
-    with pytest.raises(JobRunError, match="only type=python"):
-        run_job(paths, "dbt_job", sync_first=False)
+    result = run_job(paths, "dbt_job")
+    assert result.status == "succeeded"
+    assert result.error_message is None
 
     with connect(paths.sqlite_path) as conn:
-        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
+        row = conn.execute(
+            "SELECT status, started_at, finished_at, error_message FROM job_runs "
+            "WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "succeeded"
+        assert row["started_at"]
+        assert row["finished_at"]
+        assert row["error_message"] is None
+        log = conn.execute(
+            "SELECT log_kind, path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert log is not None
+        assert log["log_kind"] == "combined"
+        assert log["path"] == f"logs/{result.run_id}.log"
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert "Running with dbt stub" in content
+
+
+def test_run_dbt_failure_stores_error_and_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "dbt_fail"
+    root.mkdir()
+    paths = init_project(root, name="dbt_fail")
+    _clear_jobs_dir(root)
+    stub = _write_dbt_stub(
+        tmp_path / "bin",
+        "#!/bin/sh\n"
+        'echo "Compilation Error in model bad"\n'
+        "exit 1\n",
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_bad",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {"command": "run", "select": "missing_model"},
+        },
+    )
+
+    result = run_job(paths, "dbt_bad")
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "exited with code 1" in result.error_message
+    # error_message stays short — not a full log dump
+    assert "\n" not in result.error_message
+    assert len(result.error_message) <= 220
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status, error_message, finished_at FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "failed"
+        assert row["finished_at"]
+        assert "exited with code 1" in (row["error_message"] or "")
+        log = conn.execute(
+            "SELECT path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert log is not None
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert "Compilation Error" in content
+
+
+def test_build_dbt_argv_includes_select() -> None:
+    from bunsui.runner import build_dbt_argv
+
+    argv = build_dbt_argv(
+        {"command": "run", "select": "example"},
+        dbt_bin="/usr/bin/dbt",
+    )
+    assert argv == [
+        "/usr/bin/dbt",
+        "run",
+        "--select",
+        "example",
+        "--project-dir",
+        ".",
+        "--profiles-dir",
+        ".",
+    ]
+
+
+def test_run_dbt_real_duckdb_smoke(tmp_path: Path) -> None:
+    """One offline smoke with real dbt-core + dbt-duckdb (skipped if dbt missing)."""
+    if shutil.which("dbt") is None:
+        pytest.skip("dbt CLI not on PATH")
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    paths = init_project(root, name="demo")
+
+    result = run_job(paths, "example_dbt")
+    assert result.status == "succeeded", result.error_message
+
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            "SELECT status FROM job_runs WHERE id = ?", (result.run_id,)
+        ).fetchone()
+        assert row["status"] == "succeeded"
+        log = conn.execute(
+            "SELECT path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert log is not None
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert content.strip() != ""
 
 
 def test_init_sample_callable_runs(tmp_path: Path) -> None:

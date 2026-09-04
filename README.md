@@ -47,7 +47,7 @@ my-project/
   jobs/                    # ジョブ宣言（*.yaml / *.yml）
   .bunsui/
     control.sqlite         # コントロールプレーン
-    warehouse.duckdb       # DuckDB ウェアハウス（ロード/クエリは未実装）
+    warehouse.duckdb       # DuckDB ウェアハウス
   dbt/                     # dbt プロジェクト
   artifacts/               # run_results.json など保持
   logs/                    # ランごとの stdout など
@@ -70,9 +70,10 @@ config:
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
-`bunsui job run <name>` は yaml を sync したうえで **python** ジョブを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。**sync** は同一プロセス内で完結します。**async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（プロセス終了を正としません）。dbt はエラーになります。`--no-wait` で async ジョブを起動だけして戻ることもできます。サンプルの `example_python` / `example_python_async` はプロジェクト直下の `sample:main` / `sample:async_main` を呼びます。
+`bunsui job run <name>` は yaml を sync したうえで **python** または **dbt** ジョブを実行し、`job_runs` に running → succeeded / failed を書き込みます（`depends_on` は辿りません）。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけます。`--no-wait` で async python を起動だけして戻ることもできます。サンプルの `example_dbt` / `example_python` / `example_python_async` がそのまま動きます。
 
 ```bash
+uv run bunsui job run example_dbt --project ../my-project
 uv run bunsui job run example_python --project ../my-project
 uv run bunsui job run example_python_async --project ../my-project
 ```
@@ -93,6 +94,7 @@ cd engine
 uv sync
 uv run bunsui init ../my-project --name my-project
 uv run bunsui job sync --project ../my-project
+uv run bunsui job run example_dbt --project ../my-project
 uv run bunsui job run example_python --project ../my-project
 uv run bunsui schema --project ../my-project
 uv run pytest

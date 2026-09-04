@@ -1,7 +1,7 @@
 """Declare jobs in ``bunsui.yaml`` and/or ``jobs/*.yaml``, sync into SQLite.
 
 This module syncs declarations into the ``jobs`` table. Execution of python
-callables lives in ``bunsui.runner`` (``bunsui job run``).
+callables and dbt CLI jobs lives in ``bunsui.runner`` (``bunsui job run``).
 """
 
 from __future__ import annotations
