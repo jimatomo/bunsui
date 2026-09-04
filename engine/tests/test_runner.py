@@ -528,7 +528,7 @@ def _run_names(paths: object) -> list[str]:
             r["name"]
             for r in conn.execute(
                 "SELECT j.name FROM job_runs r JOIN jobs j ON j.id = r.job_id "
-                "ORDER BY r.created_at, r.id"
+                "ORDER BY r.rowid"
             ).fetchall()
         ]
 

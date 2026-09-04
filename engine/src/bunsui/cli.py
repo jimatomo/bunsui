@@ -130,7 +130,7 @@ def job_run_cmd(
     stdout/stderr under ``logs/``. Syncs yaml first unless ``--no-sync``.
     """
     from bunsui.paths import resolve_project
-    from bunsui.runner import JobRunError, resolve_dependency_order, run_job, run_job_chain
+    from bunsui.runner import JobRunError, resolve_dependency_order, run_job
 
     paths = resolve_project(project_path)
     try:
@@ -146,33 +146,36 @@ def job_run_cmd(
         )
         if len(order) > 1:
             click.echo(f"Running chain: {' → '.join(order)}")
-        chain = run_job_chain(
-            paths, job_name, sync_first=False, wait=not no_wait
-        )
+
+        completed: list[str] = []
+        for index, step_name in enumerate(order):
+            is_leaf = index == len(order) - 1
+            result = run_job(
+                paths,
+                step_name,
+                sync_first=False,
+                wait=not no_wait if is_leaf else True,
+            )
+            if result.status == "running":
+                click.echo(
+                    f"Job {result.job_name!r} started "
+                    f"(run_id={result.run_id}, status=running)"
+                )
+                return
+            if result.status == "succeeded":
+                completed.append(step_name)
+                click.echo(
+                    f"Job {result.job_name!r} succeeded (run_id={result.run_id})"
+                )
+                continue
+            remaining = [name for name in order if name not in completed and name != step_name]
+            suffix = f"; skipped: {', '.join(remaining)}" if remaining else ""
+            raise click.ClickException(
+                f"Job {result.job_name!r} failed (run_id={result.run_id}): "
+                f"{result.error_message}{suffix}"
+            )
     except JobRunError as exc:
         raise click.ClickException(str(exc)) from exc
-
-    for step in chain.results:
-        if step.status == "running":
-            click.echo(
-                f"Job {step.job_name!r} started "
-                f"(run_id={step.run_id}, status=running)"
-            )
-            return
-        if step.status == "succeeded":
-            click.echo(f"Job {step.job_name!r} succeeded (run_id={step.run_id})")
-            continue
-        failed = chain.failed_job or step.job_name
-        remaining = [
-            name
-            for name in chain.order
-            if name not in {r.job_name for r in chain.results}
-        ]
-        suffix = f"; skipped: {', '.join(remaining)}" if remaining else ""
-        raise click.ClickException(
-            f"Job {failed!r} failed (run_id={step.run_id}): "
-            f"{step.error_message}{suffix}"
-        )
 
 
 def _echo_run_result(result: object) -> None:
