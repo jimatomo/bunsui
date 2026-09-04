@@ -34,7 +34,8 @@ def init_cmd(path: str | None, name: str | None, force: bool) -> None:
     click.echo(f"  logs:     {paths.logs_dir}")
     click.echo(
         "Next: edit jobs/, then `bunsui job sync` / "
-        "`bunsui job run example_dbt --project …`"
+        "`bunsui job run example_python --project …` "
+        "(walks example_dbt → example_python; use --no-deps for one job)"
     )
 
 
@@ -106,41 +107,90 @@ def job_sync_cmd(project_path: str) -> None:
 @click.option(
     "--no-wait",
     is_flag=True,
-    help="For async jobs: start the child and return while status is still running",
+    help="For async leaf jobs: start the child and return while status is still running",
+)
+@click.option(
+    "--no-deps",
+    is_flag=True,
+    help="Run only the named job (do not walk depends_on)",
 )
 def job_run_cmd(
-    job_name: str, project_path: str, no_sync: bool, no_wait: bool
+    job_name: str,
+    project_path: str,
+    no_sync: bool,
+    no_wait: bool,
+    no_deps: bool,
 ) -> None:
-    """Run one job (python or dbt) and write a ``job_runs`` row.
+    """Run a job (python or dbt), walking ``depends_on`` unless ``--no-deps``.
 
-    Python sync jobs run in-process; async jobs spawn a child and complete when
-    SQLite status leaves ``running`` (poll). dbt jobs run as a sync subprocess
-    and store combined stdout/stderr under ``logs/``. Syncs yaml first unless
-    ``--no-sync``. Does not walk ``depends_on``.
+    Prerequisites run sequentially in topological order; the chain stops on the
+    first failure. Python sync jobs run in-process; async jobs spawn a child and
+    complete when SQLite status leaves ``running`` (poll). Upstream async jobs
+    always wait. dbt jobs run as a sync subprocess and store combined
+    stdout/stderr under ``logs/``. Syncs yaml first unless ``--no-sync``.
     """
     from bunsui.paths import resolve_project
-    from bunsui.runner import JobRunError, run_job
+    from bunsui.runner import JobRunError, resolve_dependency_order, run_job
 
     paths = resolve_project(project_path)
     try:
-        result = run_job(
-            paths, job_name, sync_first=not no_sync, wait=not no_wait
+        if no_deps:
+            result = run_job(
+                paths, job_name, sync_first=not no_sync, wait=not no_wait
+            )
+            _echo_run_result(result)
+            return
+
+        order = resolve_dependency_order(
+            paths, job_name, sync_first=not no_sync
         )
+        if len(order) > 1:
+            click.echo(f"Running chain: {' → '.join(order)}")
+
+        completed: list[str] = []
+        for index, step_name in enumerate(order):
+            is_leaf = index == len(order) - 1
+            result = run_job(
+                paths,
+                step_name,
+                sync_first=False,
+                wait=not no_wait if is_leaf else True,
+            )
+            if result.status == "running":
+                click.echo(
+                    f"Job {result.job_name!r} started "
+                    f"(run_id={result.run_id}, status=running)"
+                )
+                return
+            if result.status == "succeeded":
+                completed.append(step_name)
+                click.echo(
+                    f"Job {result.job_name!r} succeeded (run_id={result.run_id})"
+                )
+                continue
+            remaining = [name for name in order if name not in completed and name != step_name]
+            suffix = f"; skipped: {', '.join(remaining)}" if remaining else ""
+            raise click.ClickException(
+                f"Job {result.job_name!r} failed (run_id={result.run_id}): "
+                f"{result.error_message}{suffix}"
+            )
     except JobRunError as exc:
         raise click.ClickException(str(exc)) from exc
 
+
+def _echo_run_result(result: object) -> None:
+    from bunsui.runner import RunResult
+
+    assert isinstance(result, RunResult)
     if result.status == "running":
         click.echo(
-            f"Job {result.job_name!r} started (run_id={result.run_id}, status=running)"
+            f"Job {result.job_name!r} started "
+            f"(run_id={result.run_id}, status=running)"
         )
         return
-
     if result.status == "succeeded":
-        click.echo(
-            f"Job {result.job_name!r} succeeded (run_id={result.run_id})"
-        )
+        click.echo(f"Job {result.job_name!r} succeeded (run_id={result.run_id})")
         return
-
     raise click.ClickException(
         f"Job {result.job_name!r} failed (run_id={result.run_id}): "
         f"{result.error_message}"

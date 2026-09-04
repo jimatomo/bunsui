@@ -485,7 +485,7 @@ def test_init_sample_async_callable_runs(tmp_path: Path) -> None:
 
 
 def test_run_does_not_walk_depends_on(tmp_path: Path) -> None:
-    """Named job runs alone even when depends_on lists another job."""
+    """``run_job`` runs only the named job (chain walking is ``run_job_chain``)."""
     root = tmp_path / "deps"
     root.mkdir()
     paths = init_project(root, name="deps")
@@ -520,3 +520,240 @@ def test_run_does_not_walk_depends_on(tmp_path: Path) -> None:
             ).fetchall()
         ]
         assert names == ["leaf"]
+
+
+def _run_names(paths: object) -> list[str]:
+    with connect(paths.sqlite_path) as conn:  # type: ignore[attr-defined]
+        return [
+            r["name"]
+            for r in conn.execute(
+                "SELECT j.name FROM job_runs r JOIN jobs j ON j.id = r.job_id "
+                "ORDER BY r.rowid"
+            ).fetchall()
+        ]
+
+
+def test_chain_linear_success(tmp_path: Path) -> None:
+    from bunsui.runner import resolve_dependency_order, run_job_chain
+
+    root = tmp_path / "chain_ok"
+    root.mkdir()
+    paths = init_project(root, name="chain_ok")
+    _clear_jobs_dir(root)
+    marker = root / "order.txt"
+    (root / "chain_ok_mod.py").write_text(
+        "from pathlib import Path\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        "def a():\n"
+        "    MARKER.write_text(MARKER.read_text() + 'a' if MARKER.exists() else 'a')\n"
+        "def b():\n"
+        "    MARKER.write_text(MARKER.read_text() + 'b' if MARKER.exists() else 'b')\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": [],
+            "config": {"callable": "chain_ok_mod:a"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "chain_ok_mod:b"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    assert resolve_dependency_order(paths, "job_b") == ["job_a", "job_b"]
+    chain = run_job_chain(paths, "job_b", sync_first=False)
+    assert chain.status == "succeeded"
+    assert [r.job_name for r in chain.results] == ["job_a", "job_b"]
+    assert _run_names(paths) == ["job_a", "job_b"]
+    assert marker.read_text(encoding="utf-8") == "ab"
+
+
+def test_chain_upstream_failure_stops(tmp_path: Path) -> None:
+    from bunsui.runner import run_job_chain
+
+    root = tmp_path / "chain_fail"
+    root.mkdir()
+    paths = init_project(root, name="chain_fail")
+    _clear_jobs_dir(root)
+    (root / "chain_fail_mod.py").write_text(
+        "def boom():\n    raise RuntimeError('upstream boom')\n"
+        "def leaf():\n    raise AssertionError('leaf must not run')\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "config": {"callable": "chain_fail_mod:boom"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "chain_fail_mod:leaf"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    chain = run_job_chain(paths, "job_b")
+    assert chain.status == "failed"
+    assert chain.failed_job == "job_a"
+    assert len(chain.results) == 1
+    assert _run_names(paths) == ["job_a"]
+
+
+def test_chain_cycle_error(tmp_path: Path) -> None:
+    from bunsui.runner import JobRunError, resolve_dependency_order
+
+    root = tmp_path / "cycle"
+    root.mkdir()
+    paths = init_project(root, name="cycle")
+    _clear_jobs_dir(root)
+    (root / "cycle_mod.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_b"],
+            "config": {"callable": "cycle_mod:main"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "cycle_mod:main"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    with pytest.raises(JobRunError, match="dependency cycle"):
+        resolve_dependency_order(paths, "job_a")
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
+
+
+def test_chain_missing_dep_error(tmp_path: Path) -> None:
+    from bunsui.jobs import sync_jobs
+    from bunsui.runner import JobRunError, resolve_dependency_order
+
+    root = tmp_path / "missing"
+    root.mkdir()
+    paths = init_project(root, name="missing")
+    _clear_jobs_dir(root)
+    (root / "missing_mod.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "upstream",
+            "type": "python",
+            "execution_mode": "sync",
+            "config": {"callable": "missing_mod:main"},
+        },
+        {
+            "name": "leaf",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["upstream"],
+            "config": {"callable": "missing_mod:main"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+    sync_jobs(paths)
+
+    with connect(paths.sqlite_path) as conn:
+        conn.execute("UPDATE jobs SET enabled = 0 WHERE name = 'upstream'")
+        conn.commit()
+
+    with pytest.raises(JobRunError, match="missing or disabled job 'upstream'"):
+        resolve_dependency_order(paths, "leaf", sync_first=False)
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
+
+
+def test_chain_no_deps_runs_one_job(tmp_path: Path) -> None:
+    """CLI ``--no-deps`` path: ``run_job`` alone despite depends_on."""
+    root = tmp_path / "no_deps"
+    root.mkdir()
+    paths = init_project(root, name="no_deps")
+    _clear_jobs_dir(root)
+    (root / "no_deps_mod.py").write_text(
+        "def upstream():\n    raise RuntimeError('should not run')\n"
+        "def leaf():\n    pass\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "config": {"callable": "no_deps_mod:upstream"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "no_deps_mod:leaf"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    result = run_job(paths, "job_b")
+    assert result.status == "succeeded"
+    assert _run_names(paths) == ["job_b"]
+
+
+def test_chain_waits_for_async_upstream(tmp_path: Path) -> None:
+    from bunsui.runner import run_job_chain
+
+    root = tmp_path / "async_up"
+    root.mkdir()
+    paths = init_project(root, name="async_up")
+    _clear_jobs_dir(root)
+    (root / "async_up_mod.py").write_text(
+        "import time\n"
+        "def up():\n"
+        "    time.sleep(0.15)\n"
+        "def leaf():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "async",
+            "config": {"callable": "async_up_mod:up"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "async_up_mod:leaf"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    chain = run_job_chain(paths, "job_b", poll_interval=0.02)
+    assert chain.status == "succeeded"
+    assert [r.job_name for r in chain.results] == ["job_a", "job_b"]
+    assert all(r.status == "succeeded" for r in chain.results)
+    assert _run_names(paths) == ["job_a", "job_b"]

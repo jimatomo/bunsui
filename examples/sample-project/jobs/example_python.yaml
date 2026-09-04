@@ -3,6 +3,6 @@ name: example_python
 type: python
 execution_mode: sync
 depends_on:
-- example_dbt
+- example_dbt  # `bunsui job run example_python` runs example_dbt first
 config:
   callable: sample:main
