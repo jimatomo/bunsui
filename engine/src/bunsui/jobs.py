@@ -274,7 +274,7 @@ def example_job_files() -> dict[str, dict[str, Any]]:
             "name": "example_python",
             "type": "python",
             "execution_mode": "sync",
-            "depends_on": ["example_dbt"],
+            "depends_on": ["example_dbt"],  # job run walks this chain by default
             "config": {
                 "callable": "sample:main",
             },

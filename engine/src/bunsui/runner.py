@@ -1,8 +1,9 @@
-"""Run a single job and record ``job_runs``.
+"""Run jobs and record ``job_runs``.
 
 Supports ``type=python`` (``execution_mode=sync`` in-process or ``async`` child +
 SQLite poll) and ``type=dbt`` (``execution_mode=sync`` subprocess + ``run_results``
-asset ingest). Does not walk ``depends_on``.
+asset ingest). ``run_job`` runs one named job; ``run_job_chain`` walks
+``depends_on`` in topological order and stops on the first failure.
 """
 
 from __future__ import annotations
@@ -41,6 +42,39 @@ class RunResult:
     job_name: str
     status: str  # running | succeeded | failed
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class ChainResult:
+    """Outcome of a ``depends_on`` chain (ordered steps + final status)."""
+
+    order: tuple[str, ...]
+    results: tuple[RunResult, ...]
+
+    @property
+    def job_name(self) -> str:
+        return self.order[-1] if self.order else ""
+
+    @property
+    def status(self) -> str:
+        if not self.results:
+            return "succeeded"
+        return self.results[-1].status
+
+    @property
+    def run_id(self) -> str | None:
+        return self.results[-1].run_id if self.results else None
+
+    @property
+    def error_message(self) -> str | None:
+        return self.results[-1].error_message if self.results else None
+
+    @property
+    def failed_job(self) -> str | None:
+        for result in self.results:
+            if result.status == "failed":
+                return result.job_name
+        return None
 
 
 class JobRunError(Exception):
@@ -642,3 +676,166 @@ def run_job(
         timeout=timeout,
         polled_statuses=polled_statuses,
     )
+
+
+def _load_depends_graph(
+    sqlite_path: str | Path,
+) -> dict[str, list[str]]:
+    """Return enabled job name → depends_on list from SQLite."""
+    with connect(sqlite_path) as conn:
+        rows = conn.execute(
+            "SELECT name, depends_on_json, enabled FROM jobs"
+        ).fetchall()
+
+    graph: dict[str, list[str]] = {}
+    for row in rows:
+        name = str(row["name"])
+        if int(row["enabled"]) != 1:
+            continue
+        raw = row["depends_on_json"] or "[]"
+        try:
+            deps = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise JobRunError(
+                f"job {name!r} has invalid depends_on_json: {exc}"
+            ) from exc
+        if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+            raise JobRunError(
+                f"job {name!r} depends_on_json must be a JSON array of strings"
+            )
+        graph[name] = [d.strip() for d in deps if d.strip()]
+    return graph
+
+
+def resolve_dependency_order(
+    paths: ProjectPaths,
+    job_name: str,
+    *,
+    sync_first: bool = True,
+) -> list[str]:
+    """Resolve ``depends_on`` into prerequisites + ``job_name`` (topological order).
+
+    Raises ``JobRunError`` for missing / disabled deps or cycles. Does not insert
+    any ``job_runs`` rows.
+    """
+    if sync_first:
+        sync_jobs(paths)
+    else:
+        bootstrap_sqlite(paths.sqlite_path)
+
+    graph = _load_depends_graph(paths.sqlite_path)
+    if job_name not in graph:
+        # Distinguish missing vs disabled for a clearer message.
+        with connect(paths.sqlite_path) as conn:
+            row = conn.execute(
+                "SELECT enabled FROM jobs WHERE name = ?",
+                (job_name,),
+            ).fetchone()
+        if row is None:
+            raise JobRunError(
+                f"job {job_name!r} not found in SQLite "
+                "(run `bunsui job sync` or check the name)"
+            )
+        raise JobRunError(f"job {job_name!r} is disabled")
+
+    # Collect the transitive closure of prerequisites (including job_name).
+    needed: set[str] = set()
+    stack = [job_name]
+    while stack:
+        current = stack.pop()
+        if current in needed:
+            continue
+        if current not in graph:
+            raise JobRunError(
+                f"job {job_name!r} depends on missing or disabled job {current!r}"
+            )
+        needed.add(current)
+        for dep in graph[current]:
+            if dep not in graph:
+                raise JobRunError(
+                    f"job {current!r} depends on missing or disabled job {dep!r}"
+                )
+            if dep not in needed:
+                stack.append(dep)
+
+    # Kahn topological sort on the needed subgraph (stable: preserve depends_on order).
+    indegree = {name: 0 for name in needed}
+    children: dict[str, list[str]] = {name: [] for name in needed}
+    for name in needed:
+        for dep in graph[name]:
+            if dep not in needed:
+                continue
+            indegree[name] += 1
+            children[dep].append(name)
+
+    # Seed queue with zero-indegree nodes in a deterministic order.
+    ready = sorted(name for name, deg in indegree.items() if deg == 0)
+    order: list[str] = []
+    while ready:
+        node = ready.pop(0)
+        order.append(node)
+        for child in children[node]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                # Insert keeping sorted order among newly ready nodes.
+                ready.append(child)
+                ready.sort()
+
+    if len(order) != len(needed):
+        cyclic = sorted(needed - set(order))
+        raise JobRunError(
+            f"dependency cycle detected involving: {', '.join(cyclic)}"
+        )
+
+    # Ensure the requested leaf is last among ties that Kahn might reorder wrongly:
+    # Kahn with sorted ready already yields a valid topo order; leaf may not be last
+    # only if something incorrectly depends on it within the subgraph — which would
+    # mean we collected jobs that depend on the leaf. We only collect ancestors of
+    # the leaf, so the leaf has no dependents in `needed` and is always last-capable.
+    # Still assert the leaf appears exactly once.
+    if order.count(job_name) != 1:
+        raise JobRunError(f"internal error resolving order for {job_name!r}")
+    return order
+
+
+def run_job_chain(
+    paths: ProjectPaths,
+    job_name: str,
+    *,
+    sync_first: bool = True,
+    trigger: str = "manual",
+    wait: bool = True,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_S,
+    timeout: float = DEFAULT_ASYNC_TIMEOUT_S,
+    polled_statuses: list[str] | None = None,
+) -> ChainResult:
+    """Run ``job_name`` after its ``depends_on`` prerequisites (sequential).
+
+    Upstream jobs always wait for completion (including async python via SQLite
+    poll). ``wait`` / ``polled_statuses`` apply only to the leaf job. Stops at the
+    first failed step and does not start remaining jobs. Validation failures
+    (cycle / missing dep) raise ``JobRunError`` before any run row is inserted.
+    """
+    order = resolve_dependency_order(paths, job_name, sync_first=sync_first)
+    results: list[RunResult] = []
+
+    for index, step_name in enumerate(order):
+        is_leaf = index == len(order) - 1
+        result = run_job(
+            paths,
+            step_name,
+            sync_first=False,
+            trigger=trigger,
+            wait=wait if is_leaf else True,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            polled_statuses=polled_statuses if is_leaf else None,
+        )
+        results.append(result)
+        if result.status == "failed":
+            break
+        if result.status == "running":
+            # Leaf --no-wait: do not continue (nothing left anyway).
+            break
+
+    return ChainResult(order=tuple(order), results=tuple(results))
