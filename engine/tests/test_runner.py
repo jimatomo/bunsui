@@ -757,3 +757,183 @@ def test_chain_waits_for_async_upstream(tmp_path: Path) -> None:
     assert [r.job_name for r in chain.results] == ["job_a", "job_b"]
     assert all(r.status == "succeeded" for r in chain.results)
     assert _run_names(paths) == ["job_a", "job_b"]
+
+
+def test_chain_diamond_runs_siblings_in_parallel(tmp_path: Path) -> None:
+    """Diamond A→B, A→C, B+C→D: B and C start together before D."""
+    from bunsui.runner import run_job_chain
+
+    root = tmp_path / "diamond"
+    root.mkdir()
+    paths = init_project(root, name="diamond")
+    _clear_jobs_dir(root)
+    sqlite = str(paths.sqlite_path)
+
+    (root / "diamond_mod.py").write_text(
+        "import sqlite3\n"
+        "import threading\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "\n"
+        f"SQLITE = {sqlite!r}\n"
+        f"ROOT = Path({str(root)!r})\n"
+        "b_started = threading.Event()\n"
+        "c_started = threading.Event()\n"
+        "\n"
+        "def a():\n"
+        "    pass\n"
+        "\n"
+        "def b():\n"
+        "    b_started.set()\n"
+        "    assert c_started.wait(timeout=2.0), 'C did not start alongside B'\n"
+        "    time.sleep(0.05)\n"
+        "\n"
+        "def c():\n"
+        "    c_started.set()\n"
+        "    assert b_started.wait(timeout=2.0), 'B did not start alongside C'\n"
+        "    time.sleep(0.05)\n"
+        "\n"
+        "def d():\n"
+        "    conn = sqlite3.connect(SQLITE)\n"
+        "    rows = list(\n"
+        "        conn.execute(\n"
+        "            'SELECT j.name, r.status FROM job_runs r '\n"
+        "            'JOIN jobs j ON j.id = r.job_id'\n"
+        "        )\n"
+        "    )\n"
+        "    conn.close()\n"
+        "    by_name = {name: status for name, status in rows}\n"
+        "    assert by_name.get('job_b') == 'succeeded'\n"
+        "    assert by_name.get('job_c') == 'succeeded'\n"
+        "    # D's own running row may already exist before the callable body.\n"
+        "    assert by_name.get('job_d') in (None, 'running')\n"
+        "    (ROOT / 'd_gate.txt').write_text('ok', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": [],
+            "config": {"callable": "diamond_mod:a"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "diamond_mod:b"},
+        },
+        {
+            "name": "job_c",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "diamond_mod:c"},
+        },
+        {
+            "name": "job_d",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_b", "job_c"],
+            "config": {"callable": "diamond_mod:d"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    waves: list[list[str]] = []
+
+    def on_wave(_n: int, jobs: object) -> None:
+        waves.append([str(j) for j in jobs])  # type: ignore[union-attr]
+
+    chain = run_job_chain(paths, "job_d", on_wave=on_wave)
+    assert chain.status == "succeeded"
+    assert chain.order == ("job_a", "job_b", "job_c", "job_d")
+    assert [r.job_name for r in chain.results] == [
+        "job_a",
+        "job_b",
+        "job_c",
+        "job_d",
+    ]
+    assert ["job_b", "job_c"] in waves
+    names = _run_names(paths)
+    assert names[0] == "job_a"
+    assert set(names[1:3]) == {"job_b", "job_c"}
+    assert names[3] == "job_d"
+    assert (root / "d_gate.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_chain_sibling_failure_skips_downstream(tmp_path: Path) -> None:
+    """If one sibling fails, wait for the other but do not start D."""
+    from bunsui.runner import run_job_chain
+
+    root = tmp_path / "sib_fail"
+    root.mkdir()
+    paths = init_project(root, name="sib_fail")
+    _clear_jobs_dir(root)
+    (root / "sib_fail_mod.py").write_text(
+        "import threading\n"
+        "import time\n"
+        "b_started = threading.Event()\n"
+        "c_started = threading.Event()\n"
+        "\n"
+        "def a():\n"
+        "    pass\n"
+        "\n"
+        "def b():\n"
+        "    b_started.set()\n"
+        "    assert c_started.wait(timeout=2.0)\n"
+        "    raise RuntimeError('sibling boom')\n"
+        "\n"
+        "def c():\n"
+        "    c_started.set()\n"
+        "    assert b_started.wait(timeout=2.0)\n"
+        "    time.sleep(0.1)  # still in-flight when B fails\n"
+        "\n"
+        "def d():\n"
+        "    raise AssertionError('D must not run')\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(paths)
+    cfg["jobs"] = [
+        {
+            "name": "job_a",
+            "type": "python",
+            "execution_mode": "sync",
+            "config": {"callable": "sib_fail_mod:a"},
+        },
+        {
+            "name": "job_b",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "sib_fail_mod:b"},
+        },
+        {
+            "name": "job_c",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_a"],
+            "config": {"callable": "sib_fail_mod:c"},
+        },
+        {
+            "name": "job_d",
+            "type": "python",
+            "execution_mode": "sync",
+            "depends_on": ["job_b", "job_c"],
+            "config": {"callable": "sib_fail_mod:d"},
+        },
+    ]
+    write_config(paths.config_file, cfg)
+
+    chain = run_job_chain(paths, "job_d")
+    assert chain.status == "failed"
+    assert chain.failed_job == "job_b"
+    result_names = {r.job_name for r in chain.results}
+    assert result_names == {"job_a", "job_b", "job_c"}
+    assert "job_d" not in result_names
+    assert set(_run_names(paths)) == {"job_a", "job_b", "job_c"}
+    c_result = next(r for r in chain.results if r.job_name == "job_c")
+    assert c_result.status == "succeeded"
