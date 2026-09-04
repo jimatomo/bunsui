@@ -6,9 +6,21 @@
  * Async job completion is detected by polling SQLite status.
  */
 
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { openControlDb, type ControlDb } from "./db";
+
+function resolveLogFilePath(
+  projectRoot: string,
+  path: string | null,
+): string | null {
+  if (!path) return null;
+  if (isAbsolute(path)) return path;
+  if (!projectRoot) return null;
+  return join(projectRoot, path);
+}
 
 export type AppEnv = {
   Variables: {
@@ -105,8 +117,56 @@ export function createApp(options?: {
     }
     return c.json({
       logs: control.listLogs(),
-      note: "Log tailing is not implemented yet",
+      note: "GET /api/logs/:id returns captured stdout/stderr for a log row",
     });
+  });
+
+  app.get("/api/logs/:id", (c) => {
+    const control = c.get("db");
+    if (!control) {
+      return c.json({ error: "SQLite control plane not available" }, 503);
+    }
+    const id = c.req.param("id");
+    const row = control.getLog(id);
+    if (!row) {
+      return c.json({ error: "log not found" }, 404);
+    }
+    const filePath = resolveLogFilePath(c.get("projectRoot"), row.path);
+    if (!filePath) {
+      return c.json(
+        {
+          id: row.id,
+          job_run_id: row.job_run_id,
+          log_kind: row.log_kind,
+          path: row.path,
+          content: null,
+          error: "log path could not be resolved (set BUNSUI_PROJECT)",
+        },
+        200,
+      );
+    }
+    try {
+      const content = readFileSync(filePath, "utf8");
+      return c.json({
+        id: row.id,
+        job_run_id: row.job_run_id,
+        log_kind: row.log_kind,
+        path: row.path,
+        content,
+      });
+    } catch {
+      return c.json(
+        {
+          id: row.id,
+          job_run_id: row.job_run_id,
+          log_kind: row.log_kind,
+          path: row.path,
+          content: null,
+          error: `log file not readable: ${filePath}`,
+        },
+        200,
+      );
+    }
   });
 
   return app;

@@ -1,4 +1,4 @@
-# Local DuckDB profile for dbt (execution not wired yet).
+# Local DuckDB profile for dbt (used by `bunsui job run` type=dbt).
 sample_project:
   target: dev
   outputs:

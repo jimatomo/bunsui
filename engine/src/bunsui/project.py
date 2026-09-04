@@ -28,7 +28,7 @@ clean-targets: ["target", "dbt_packages"]
 """
 
 DBT_PROFILES_STUB = """\
-# Local DuckDB profile for dbt (execution not wired yet).
+# Local DuckDB profile for dbt (used by `bunsui job run` type=dbt).
 {name}:
   target: dev
   outputs:
@@ -39,7 +39,7 @@ DBT_PROFILES_STUB = """\
 """
 
 DBT_MODEL_STUB = """\
--- Example model (dbt run not implemented yet).
+-- Example model for `bunsui job run example_dbt`.
 select 1 as id
 """
 
@@ -81,9 +81,11 @@ def init_project(
     write_example_job_files(paths.jobs_dir)
     (paths.root / "sample.py").write_text(SAMPLE_PYTHON_MODULE, encoding="utf-8")
 
-    # Reserve DuckDB warehouse file path (load/query not implemented yet).
+    # Create a valid empty DuckDB warehouse (an empty touch() is not a DB file).
     if not paths.duckdb_path.exists():
-        paths.duckdb_path.touch()
+        import duckdb
+
+        duckdb.connect(str(paths.duckdb_path)).close()
 
     bootstrap_sqlite(paths.sqlite_path)
 

@@ -56,6 +56,10 @@ examples/**/logs/*
 !examples/**/logs/.gitkeep
 examples/**/artifacts/*
 !examples/**/artifacts/.gitkeep
+examples/**/dbt/target/
+examples/**/dbt/dbt_packages/
+examples/**/dbt/logs/
+examples/**/dbt/.user.yml
 
 # Local project meta DBs may be regenerated; keep sample sqlite for smoke demos
 # Ignore ad-hoc projects at repo root

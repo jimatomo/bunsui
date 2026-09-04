@@ -31,6 +31,15 @@ jobs:
           uv run python -c "import sqlite3; c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite'); r=c.execute(\"select status from job_runs order by created_at desc limit 1\").fetchone(); assert r and r[0]=='succeeded', r"
           uv run bunsui job run example_python_async --project /tmp/bunsui-ci
           uv run python -c "import sqlite3; c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite'); r=c.execute(\"select status from job_runs order by created_at desc limit 1\").fetchone(); assert r and r[0]=='succeeded', r"
+          uv run bunsui job run example_dbt --project /tmp/bunsui-ci
+          uv run python -c "
+import sqlite3
+c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite')
+r=c.execute('select id, status from job_runs order by created_at desc limit 1').fetchone()
+assert r and r[1]=='succeeded', r
+log=c.execute('select path from logs where job_run_id=?', (r[0],)).fetchone()
+assert log and log[0], log
+"
 
   web:
     runs-on: ubuntu-latest

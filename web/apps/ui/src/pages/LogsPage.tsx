@@ -7,9 +7,17 @@ type Log = {
   path: string | null;
 };
 
+type LogDetail = {
+  id: string;
+  content: string | null;
+  error?: string;
+};
+
 export function LogsPage() {
   const [logs, setLogs] = useState<Log[] | null>(null);
   const [note, setNote] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<LogDetail | null>(null);
 
   useEffect(() => {
     fetch("/api/logs")
@@ -21,12 +29,32 @@ export function LogsPage() {
       .catch(() => setLogs([]));
   }, []);
 
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/logs/${selectedId}`)
+      .then((r) => r.json())
+      .then((body: LogDetail) => {
+        if (!cancelled) setDetail(body);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetail({ id: selectedId, content: null, error: "failed to load" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   return (
     <section>
       <h1>Logs</h1>
       <p className="lede">
-        Stdout log paths tied to job runs. Log tailing in the UI is not
-        implemented yet.
+        Stdout log paths tied to job runs. Select a row to read captured output.
       </p>
       {note ? <p className="lede mono">{note}</p> : null}
       {logs === null ? (
@@ -44,7 +72,15 @@ export function LogsPage() {
           </thead>
           <tbody>
             {logs.map((l) => (
-              <tr key={l.id}>
+              <tr
+                key={l.id}
+                onClick={() => setSelectedId(l.id)}
+                style={{
+                  cursor: "pointer",
+                  background:
+                    selectedId === l.id ? "var(--row-selected, #eee)" : undefined,
+                }}
+              >
                 <td className="mono">{l.job_run_id}</td>
                 <td>{l.log_kind}</td>
                 <td className="mono">{l.path ?? "—"}</td>
@@ -53,6 +89,13 @@ export function LogsPage() {
           </tbody>
         </table>
       )}
+      {selectedId && detail ? (
+        <pre className="mono" style={{ marginTop: "1rem", whiteSpace: "pre-wrap" }}>
+          {detail.error
+            ? detail.error
+            : (detail.content ?? "(empty)")}
+        </pre>
+      ) : null}
     </section>
   );
 }

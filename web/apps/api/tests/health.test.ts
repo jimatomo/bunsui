@@ -97,4 +97,35 @@ describe("health / status", () => {
     expect(body.jobs[0].last_run_status).toBe("succeeded");
     expect(body.jobs[0].last_finished_at).toBe("2026-01-01T01:00:01+00:00");
   });
+
+  test("GET /api/logs/:id returns captured log content", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const logFile = join(tmpRoot, "run.log");
+    writeFileSync(logFile, "hello from dbt\n", "utf8");
+
+    const db = new Database(sqlitePath);
+    db.run(
+      `INSERT INTO jobs (id, name, job_type, execution_mode, enabled, created_at, updated_at)
+       VALUES ('j2', 'dbt_demo', 'dbt', 'sync', 1, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')`,
+    );
+    db.run(
+      `INSERT INTO job_runs (id, job_id, status, started_at, finished_at, created_at, updated_at)
+       VALUES ('r2', 'j2', 'succeeded', '2026-01-01T02:00:00+00:00', '2026-01-01T02:00:01+00:00',
+               '2026-01-01T02:00:00+00:00', '2026-01-01T02:00:01+00:00')`,
+    );
+    db.run(
+      `INSERT INTO logs (id, job_run_id, log_kind, path, created_at)
+       VALUES ('l1', 'r2', 'combined', ?, '2026-01-01T02:00:01+00:00')`,
+      [logFile],
+    );
+    db.close();
+
+    const app = createApp({ sqlitePath, projectRoot: tmpRoot });
+    const res = await app.request("/api/logs/l1");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.id).toBe("l1");
+    expect(body.job_run_id).toBe("r2");
+    expect(body.content).toContain("hello from dbt");
+  });
 });

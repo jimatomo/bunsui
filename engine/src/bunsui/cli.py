@@ -34,7 +34,7 @@ def init_cmd(path: str | None, name: str | None, force: bool) -> None:
     click.echo(f"  logs:     {paths.logs_dir}")
     click.echo(
         "Next: edit jobs/, then `bunsui job sync` / "
-        "`bunsui job run example_python --project …`"
+        "`bunsui job run example_dbt --project …`"
     )
 
 
@@ -63,7 +63,7 @@ def schema_cmd(project_path: str) -> None:
 
 @main.group("job")
 def job_group() -> None:
-    """Manage and run jobs (yaml → SQLite → python sync/async run)."""
+    """Manage and run jobs (yaml → SQLite → python / dbt run)."""
 
 
 @job_group.command("sync")
@@ -111,11 +111,12 @@ def job_sync_cmd(project_path: str) -> None:
 def job_run_cmd(
     job_name: str, project_path: str, no_sync: bool, no_wait: bool
 ) -> None:
-    """Run one python job and write a ``job_runs`` row.
+    """Run one job (python or dbt) and write a ``job_runs`` row.
 
-    Sync jobs run in-process. Async jobs spawn a child and complete when SQLite
-    status leaves ``running`` (poll). Syncs yaml first unless ``--no-sync``.
-    Does not walk ``depends_on``. dbt jobs are rejected.
+    Python sync jobs run in-process; async jobs spawn a child and complete when
+    SQLite status leaves ``running`` (poll). dbt jobs run as a sync subprocess
+    and store combined stdout/stderr under ``logs/``. Syncs yaml first unless
+    ``--no-sync``. Does not walk ``depends_on``.
     """
     from bunsui.paths import resolve_project
     from bunsui.runner import JobRunError, run_job
