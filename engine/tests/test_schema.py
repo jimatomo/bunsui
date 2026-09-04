@@ -46,6 +46,8 @@ def test_init_project_layout(tmp_path: Path) -> None:
     assert paths.duckdb_path.exists()
     assert paths.dbt_dir.is_dir()
     assert (paths.dbt_dir / "dbt_project.yml").is_file()
+    assert (paths.dbt_dir / "models" / "example.sql").is_file()
+    assert (paths.dbt_dir / "models" / "schema.yml").is_file()
     assert paths.artifacts_dir.is_dir()
     assert paths.logs_dir.is_dir()
 

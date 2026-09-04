@@ -1,8 +1,8 @@
 """Run a single job and record ``job_runs``.
 
 Supports ``type=python`` (``execution_mode=sync`` in-process or ``async`` child +
-SQLite poll) and ``type=dbt`` (``execution_mode=sync`` subprocess). Does not walk
-``depends_on`` or ingest assets / ``run_results.json``.
+SQLite poll) and ``type=dbt`` (``execution_mode=sync`` subprocess + ``run_results``
+asset ingest). Does not walk ``depends_on``.
 """
 
 from __future__ import annotations
@@ -20,9 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from bunsui.config import load_config
 from bunsui.db import bootstrap_sqlite, connect, utc_now_iso
 from bunsui.jobs import sync_jobs
 from bunsui.paths import LOGS_DIRNAME, ProjectPaths
+from bunsui.run_results import ingest_dbt_run_results
 
 TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
 DEFAULT_POLL_INTERVAL_S = 0.05
@@ -479,6 +481,15 @@ def _run_sync_dbt(
         status = "failed"
         error_message = _short_dbt_error(completed.returncode, combined)
 
+    retention_days = 30
+    try:
+        cfg = load_config(paths)
+        raw_days = cfg.get("artifact_retention_days", 30)
+        if isinstance(raw_days, int) and raw_days >= 0:
+            retention_days = raw_days
+    except (OSError, ValueError, FileNotFoundError):
+        pass
+
     with connect(paths.sqlite_path) as conn:
         _store_run_log(
             conn,
@@ -494,6 +505,15 @@ def _run_sync_dbt(
             error_message=error_message,
             finished_at=finished,
         )
+        # Success or failure: ingest whatever run_results.json dbt left behind.
+        ingest_dbt_run_results(
+            conn,
+            paths=paths,
+            run_id=run_id,
+            created_at=finished,
+            retention_days=retention_days,
+        )
+        conn.commit()
 
     return RunResult(
         run_id=run_id,
@@ -518,8 +538,8 @@ def run_job(
 
     Python sync jobs run in-process. Python async jobs spawn a child that writes
     terminal status into SQLite; the parent waits by polling ``job_runs.status``.
-    dbt jobs run ``dbt`` as a sync subprocess and store combined stdout/stderr
-    in the ``logs`` table (filesystem path under ``logs/``).
+    dbt jobs run ``dbt`` as a sync subprocess, store combined stdout/stderr in
+    the ``logs`` table, and ingest ``target/run_results.json`` into ``assets``.
 
     Validation failures (missing / disabled / bad config) raise ``JobRunError``
     without leaving a run row.

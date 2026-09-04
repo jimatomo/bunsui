@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json"
+  },
+  "results": [
+    {
+      "status": "success",
+      "unique_id": "model.fx_demo.example",
+      "message": "OK",
+      "failures": null,
+      "relation_name": "\"warehouse\".\"main\".\"example\"",
+      "execution_time": 0.055441856384277344
+    },
+    {
+      "status": "fail",
+      "unique_id": "test.fx_demo.accepted_values_example_id__999.fcb33e4523",
+      "message": "Got 1 result, configured to fail if != 0",
+      "failures": 1,
+      "relation_name": null,
+      "execution_time": 0.02054572105407715
+    }
+  ],
+  "elapsed_time": 0.13529443740844727,
+  "args": {}
+}

@@ -128,4 +128,40 @@ describe("health / status", () => {
     expect(body.job_run_id).toBe("r2");
     expect(body.content).toContain("hello from dbt");
   });
+
+  test("GET /api/assets returns asset rows", async () => {
+    const db = new Database(sqlitePath);
+    db.run(
+      `INSERT INTO assets (
+         id, asset_key, asset_type, status, parent_asset_id,
+         last_materialized_at, last_run_id, metadata_json, created_at, updated_at
+       ) VALUES (
+         'a1', 'model.demo.example', 'model', 'materialized', NULL,
+         '2026-01-01T03:00:00+00:00', 'r2', NULL,
+         '2026-01-01T03:00:00+00:00', '2026-01-01T03:00:00+00:00'
+       )`,
+    );
+    db.run(
+      `INSERT INTO assets (
+         id, asset_key, asset_type, status, parent_asset_id,
+         last_materialized_at, last_run_id, metadata_json, created_at, updated_at
+       ) VALUES (
+         'a2', 'test.demo.not_null_example_id.abc', 'test', 'materialized', 'a1',
+         '2026-01-01T03:00:00+00:00', 'r2', NULL,
+         '2026-01-01T03:00:00+00:00', '2026-01-01T03:00:00+00:00'
+       )`,
+    );
+    db.close();
+
+    const app = createApp({ sqlitePath });
+    const res = await app.request("/api/assets");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.assets.length).toBeGreaterThanOrEqual(2);
+    const model = body.assets.find((a: { asset_key: string }) =>
+      a.asset_key.startsWith("model."),
+    );
+    expect(model?.status).toBe("materialized");
+    expect(model?.asset_type).toBe("model");
+  });
 });

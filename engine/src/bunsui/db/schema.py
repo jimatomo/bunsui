@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs(status);
 
 CREATE TABLE IF NOT EXISTS asset_materializations (
-    -- Per-run materialization / status events for assets (from run_results.json later).
+    -- Per-run materialization / status events for assets (from run_results.json).
     id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     job_run_id TEXT REFERENCES job_runs(id) ON DELETE SET NULL,

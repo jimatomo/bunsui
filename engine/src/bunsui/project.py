@@ -43,6 +43,17 @@ DBT_MODEL_STUB = """\
 select 1 as id
 """
 
+DBT_SCHEMA_STUB = """\
+version: 2
+
+models:
+  - name: example
+    columns:
+      - name: id
+        data_tests:
+          - not_null
+"""
+
 GITKEEP = ""
 
 SAMPLE_PYTHON_MODULE = """\
@@ -101,6 +112,7 @@ def init_project(
         encoding="utf-8",
     )
     (models_dir / "example.sql").write_text(DBT_MODEL_STUB, encoding="utf-8")
+    (models_dir / "schema.yml").write_text(DBT_SCHEMA_STUB, encoding="utf-8")
 
     (paths.artifacts_dir / ".gitkeep").write_text(GITKEEP, encoding="utf-8")
     (paths.logs_dir / ".gitkeep").write_text(GITKEEP, encoding="utf-8")

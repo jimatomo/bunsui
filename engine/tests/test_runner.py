@@ -440,6 +440,16 @@ def test_run_dbt_real_duckdb_smoke(tmp_path: Path) -> None:
         assert log is not None
         content = (paths.root / log["path"]).read_text(encoding="utf-8")
         assert content.strip() != ""
+        assets = list(
+            conn.execute(
+                "SELECT asset_key, asset_type, status FROM assets ORDER BY asset_key"
+            )
+        )
+        assert len(assets) >= 1
+        assert any(a["asset_type"] == "model" and "example" in a["asset_key"] for a in assets)
+        assert all(
+            a["status"] in {"materialized", "failed", "skipped"} for a in assets
+        )
 
 
 def test_init_sample_callable_runs(tmp_path: Path) -> None:

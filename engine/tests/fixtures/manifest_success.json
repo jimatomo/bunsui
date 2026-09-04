@@ -1,0 +1,20 @@
+{
+  "nodes": {
+    "model.fx_demo.example": {
+      "resource_type": "model",
+      "attached_node": null,
+      "depends_on": {
+        "nodes": []
+      }
+    },
+    "test.fx_demo.not_null_example_id.96691fbe5c": {
+      "resource_type": "test",
+      "attached_node": "model.fx_demo.example",
+      "depends_on": {
+        "nodes": [
+          "model.fx_demo.example"
+        ]
+      }
+    }
+  }
+}
