@@ -149,3 +149,48 @@ a {
   font-family: var(--mono);
   font-size: 0.85rem;
 }
+
+.muted {
+  color: var(--muted);
+}
+
+.btn {
+  font-family: var(--font);
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: rgba(111, 191, 138, 0.14);
+  border: 1px solid rgba(111, 191, 138, 0.35);
+  border-radius: 4px;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(111, 191, 138, 0.24);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.flash {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  margin: 0 0 1rem;
+  border: 1px solid var(--line);
+}
+
+.flash-ok {
+  color: var(--ink);
+  background: rgba(111, 191, 138, 0.18);
+  border-color: rgba(111, 191, 138, 0.45);
+}
+
+.flash-err {
+  color: #f0c4c4;
+  background: rgba(180, 70, 70, 0.18);
+  border-color: rgba(180, 70, 70, 0.4);
+}

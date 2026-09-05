@@ -17,3 +17,7 @@ export BUNSUI_PROJECT=/path/to/project   # reads .bunsui/control.sqlite
 export BUNSUI_SQLITE=/path/to/.bunsui/control.sqlite
 bun run dev:api
 ```
+
+`POST /api/jobs/:name/run` starts a job by spawning `uv run bunsui job run …`
+(blocking until the chain finishes). Optional JSON body: `{ "no_deps": false }`.
+The Jobs UI exposes a **Run** button that calls this endpoint and refreshes the list.

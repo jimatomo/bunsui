@@ -10,7 +10,8 @@
 ┌──────────────────┐     HTTP      ┌──────────────────┐
 │  React UI (web)  │◄─────────────►│  Hono API (web)  │
 └──────────────────┘               └────────┬─────────┘
-                                            │ read
+                                            │ read SQLite
+                                            │ spawn CLI for Run
                                             ▼
                                    ┌──────────────────┐
                                    │ SQLite control   │
@@ -111,6 +112,7 @@ bun install
 export BUNSUI_PROJECT="$(pwd)/../examples/sample-project"
 bun run dev
 # API http://localhost:8787  /  UI http://localhost:5173
+# Jobs UI の Run ボタン → POST /api/jobs/:name/run（CLI と同じ depends_on チェイン）
 bun test
 ```
 
@@ -123,12 +125,12 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets）、SQLite スキーマ、Hono 読み取り API、React UI（Jobs の最終ラン表示 / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets）、SQLite スキーマ、Hono API（読み取り + Jobs の **Run**）、React UI（Jobs の最終ラン表示 / Run ボタン / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
 - dbt リトライ・stdout の増分パース
-- スケジューリング / cron、UI Run ボタン
+- スケジューリング / cron
 - CSV/Parquet の DuckDB ロード
 - 本番スケジューリング
 
