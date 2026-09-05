@@ -149,3 +149,47 @@ a {
   font-family: var(--mono);
   font-size: 0.85rem;
 }
+
+.muted {
+  color: var(--muted);
+}
+
+.btn {
+  font-family: var(--font);
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: rgba(111, 191, 138, 0.14);
+  border: 1px solid rgba(111, 191, 138, 0.35);
+  border-radius: 4px;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(111, 191, 138, 0.24);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.flash {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  margin: 0 0 1rem;
+  border: 1px solid var(--line);
+}
+
+.flash-ok {
+  color: var(--accent);
+  background: rgba(111, 191, 138, 0.1);
+}
+
+.flash-err {
+  color: #e8a0a0;
+  background: rgba(180, 70, 70, 0.12);
+  border-color: rgba(180, 70, 70, 0.28);
+}

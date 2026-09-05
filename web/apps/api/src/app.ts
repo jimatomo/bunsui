@@ -2,7 +2,8 @@
  * Hono HTTP API for the React UI.
  *
  * Reads the bunsui SQLite control plane for job/asset status.
- * The Python engine owns writes (execution, DuckDB, schema init).
+ * Job runs are triggered by spawning the Python CLI (`uv run bunsui job run`);
+ * the engine owns writes (execution, DuckDB, schema init).
  * Async job completion is detected by polling SQLite status.
  */
 
@@ -11,6 +12,14 @@ import { isAbsolute, join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { openControlDb, type ControlDb } from "./db";
+import {
+  isUnknownJobError,
+  runJobViaCli,
+  type RunJobFn,
+  type RunJobResult,
+} from "./runJob";
+
+const JOB_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 function resolveLogFilePath(
   projectRoot: string,
@@ -32,9 +41,12 @@ export type AppEnv = {
 export function createApp(options?: {
   sqlitePath?: string | null;
   projectRoot?: string;
+  /** Injected for tests; default spawns `uv run bunsui job run`. */
+  runJob?: RunJobFn;
 }): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const projectRoot = options?.projectRoot ?? process.env.BUNSUI_PROJECT ?? "";
+  const runJob: RunJobFn = options?.runJob ?? runJobViaCli;
   const sqlitePath =
     options?.sqlitePath === undefined
       ? process.env.BUNSUI_SQLITE ??
@@ -92,6 +104,74 @@ export function createApp(options?: {
       return c.json({ jobs: [], note: "sqlite unavailable" });
     }
     return c.json({ jobs: control.listJobs() });
+  });
+
+  app.post("/api/jobs/:name/run", async (c) => {
+    const name = c.req.param("name");
+    if (!JOB_NAME_RE.test(name)) {
+      return c.json({ ok: false, error: "invalid job name" }, 400);
+    }
+
+    const root = c.get("projectRoot");
+    if (!root) {
+      return c.json(
+        {
+          ok: false,
+          error: "BUNSUI_PROJECT is not set",
+          hint: "export BUNSUI_PROJECT=/path/to/project",
+        },
+        503,
+      );
+    }
+
+    let noDeps = false;
+    const contentType = c.req.header("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      try {
+        const body = (await c.req.json()) as { no_deps?: unknown };
+        if (typeof body?.no_deps === "boolean") {
+          noDeps = body.no_deps;
+        }
+      } catch {
+        return c.json({ ok: false, error: "invalid JSON body" }, 400);
+      }
+    }
+
+    let result: RunJobResult;
+    try {
+      result = await runJob({ name, projectRoot: root, noDeps });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(
+        {
+          ok: false,
+          job: name,
+          status: "error",
+          run_id: null,
+          no_deps: noDeps,
+          error: message,
+        },
+        500,
+      );
+    }
+
+    const payload = {
+      ok: result.ok,
+      job: result.job,
+      status: result.status,
+      run_id: result.run_id,
+      no_deps: result.no_deps,
+      error: result.error,
+    };
+
+    if (!result.ok && result.error && isUnknownJobError(result.error)) {
+      return c.json(payload, 404);
+    }
+    if (!result.ok && result.status === "error" && result.exit_code === null) {
+      return c.json(payload, 503);
+    }
+    // Execution finished (success, failure, or leaf async started).
+    return c.json(payload);
   });
 
   app.get("/api/assets", (c) => {
