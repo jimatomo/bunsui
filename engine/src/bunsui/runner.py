@@ -3,7 +3,8 @@
 Supports ``type=python`` (``execution_mode=sync`` in-process or ``async`` child +
 SQLite poll) and ``type=dbt`` (``execution_mode=sync`` subprocess + ``run_results``
 asset ingest). ``run_job`` runs one named job; ``run_job_chain`` walks
-``depends_on`` in topological order and stops on the first failure.
+``depends_on`` in topological waves (independent siblings in parallel) and stops
+starting new waves after a failure.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,7 +49,12 @@ class RunResult:
 
 @dataclass(frozen=True)
 class ChainResult:
-    """Outcome of a ``depends_on`` chain (ordered steps + final status)."""
+    """Outcome of a ``depends_on`` chain (topo order + per-step results).
+
+    ``results`` are appended wave-by-wave; within a wave, by job name (stable).
+    Fail-fast: after any failure, in-flight siblings in that wave still finish
+    writing ``job_runs``, but no further waves start.
+    """
 
     order: tuple[str, ...]
     results: tuple[RunResult, ...]
@@ -57,16 +65,24 @@ class ChainResult:
 
     @property
     def status(self) -> str:
-        if not self.results:
-            return "succeeded"
-        return self.results[-1].status
+        if any(r.status == "failed" for r in self.results):
+            return "failed"
+        if any(r.status == "running" for r in self.results):
+            return "running"
+        return "succeeded"
 
     @property
     def run_id(self) -> str | None:
+        for result in self.results:
+            if result.status == "failed":
+                return result.run_id
         return self.results[-1].run_id if self.results else None
 
     @property
     def error_message(self) -> str | None:
+        for result in self.results:
+            if result.status == "failed":
+                return result.error_message
         return self.results[-1].error_message if self.results else None
 
     @property
@@ -808,34 +824,89 @@ def run_job_chain(
     poll_interval: float = DEFAULT_POLL_INTERVAL_S,
     timeout: float = DEFAULT_ASYNC_TIMEOUT_S,
     polled_statuses: list[str] | None = None,
+    on_wave: Callable[[int, Sequence[str]], None] | None = None,
+    on_result: Callable[[RunResult], None] | None = None,
 ) -> ChainResult:
-    """Run ``job_name`` after its ``depends_on`` prerequisites (sequential).
+    """Run ``job_name`` after its ``depends_on`` prerequisites (parallel waves).
+
+    Jobs whose remaining indegree is zero run together via
+    ``ThreadPoolExecutor`` (fan-out). A job starts only after all of its
+    ``depends_on`` predecessors in the subgraph have succeeded. Linear chains
+    remain one-job-per-wave.
 
     Upstream jobs always wait for completion (including async python via SQLite
-    poll). ``wait`` / ``polled_statuses`` apply only to the leaf job. Stops at the
-    first failed step and does not start remaining jobs. Validation failures
-    (cycle / missing dep) raise ``JobRunError`` before any run row is inserted.
+    poll). ``wait`` / ``polled_statuses`` apply only to the leaf job.
+
+    Fail-fast policy: if any job in a wave fails, in-flight siblings in that
+    wave are allowed to finish writing ``job_runs``, but no new waves start.
+    Validation failures (cycle / missing dep) raise ``JobRunError`` before any
+    run row is inserted.
     """
     order = resolve_dependency_order(paths, job_name, sync_first=sync_first)
+    graph = _load_depends_graph(paths.sqlite_path)
+    needed = set(order)
+    succeeded: set[str] = set()
+    pending = set(order)
     results: list[RunResult] = []
+    wave_num = 0
 
-    for index, step_name in enumerate(order):
-        is_leaf = index == len(order) - 1
-        result = run_job(
-            paths,
-            step_name,
-            sync_first=False,
-            trigger=trigger,
-            wait=wait if is_leaf else True,
-            poll_interval=poll_interval,
-            timeout=timeout,
-            polled_statuses=polled_statuses if is_leaf else None,
+    while pending:
+        ready = sorted(
+            name
+            for name in pending
+            if all(dep in succeeded for dep in graph.get(name, []) if dep in needed)
         )
-        results.append(result)
-        if result.status == "failed":
+        if not ready:
+            # Should be unreachable after a valid topo resolve unless a bug.
+            raise JobRunError(
+                f"internal error: no ready jobs while pending "
+                f"{', '.join(sorted(pending))}"
+            )
+
+        wave_num += 1
+        if on_wave is not None:
+            on_wave(wave_num, ready)
+
+        def _run_one(step_name: str) -> RunResult:
+            is_leaf = step_name == job_name
+            return run_job(
+                paths,
+                step_name,
+                sync_first=False,
+                trigger=trigger,
+                wait=wait if is_leaf else True,
+                poll_interval=poll_interval,
+                timeout=timeout,
+                polled_statuses=polled_statuses if is_leaf else None,
+            )
+
+        wave_results: list[RunResult]
+        if len(ready) == 1:
+            wave_results = [_run_one(ready[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=len(ready)) as pool:
+                futures = {pool.submit(_run_one, name): name for name in ready}
+                by_name: dict[str, RunResult] = {}
+                for fut in as_completed(futures):
+                    result = fut.result()
+                    by_name[result.job_name] = result
+                wave_results = [by_name[name] for name in ready]
+
+        wave_failed = False
+        for result in wave_results:
+            results.append(result)
+            pending.discard(result.job_name)
+            if on_result is not None:
+                on_result(result)
+            if result.status == "succeeded":
+                succeeded.add(result.job_name)
+            else:
+                wave_failed = True
+
+        if wave_failed:
             break
-        if result.status == "running":
-            # Leaf --no-wait: do not continue (nothing left anyway).
+        if any(r.status == "running" for r in wave_results):
+            # Leaf --no-wait: leaf is alone in its wave; stop.
             break
 
     return ChainResult(order=tuple(order), results=tuple(results))

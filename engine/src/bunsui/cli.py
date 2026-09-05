@@ -123,14 +123,22 @@ def job_run_cmd(
 ) -> None:
     """Run a job (python or dbt), walking ``depends_on`` unless ``--no-deps``.
 
-    Prerequisites run sequentially in topological order; the chain stops on the
-    first failure. Python sync jobs run in-process; async jobs spawn a child and
-    complete when SQLite status leaves ``running`` (poll). Upstream async jobs
-    always wait. dbt jobs run as a sync subprocess and store combined
-    stdout/stderr under ``logs/``. Syncs yaml first unless ``--no-sync``.
+    Prerequisites run in topological waves; independent siblings fan out in
+    parallel. A wave failure waits for in-flight siblings to finish writing
+    ``job_runs``, then skips further waves. Python sync jobs run in-process;
+    async jobs spawn a child and complete when SQLite status leaves ``running``
+    (poll). Upstream async jobs always wait. dbt jobs run as a sync subprocess
+    and store combined stdout/stderr under ``logs/``. Syncs yaml first unless
+    ``--no-sync``.
     """
     from bunsui.paths import resolve_project
-    from bunsui.runner import JobRunError, resolve_dependency_order, run_job
+    from bunsui.runner import (
+        JobRunError,
+        RunResult,
+        resolve_dependency_order,
+        run_job,
+        run_job_chain,
+    )
 
     paths = resolve_project(project_path)
     try:
@@ -147,32 +155,54 @@ def job_run_cmd(
         if len(order) > 1:
             click.echo(f"Running chain: {' → '.join(order)}")
 
+        def on_wave(wave_num: int, jobs: object) -> None:
+            names = [str(n) for n in jobs]  # type: ignore[union-attr]
+            if len(names) > 1:
+                click.echo(f"Wave {wave_num}: parallel {' + '.join(names)}")
+
         completed: list[str] = []
-        for index, step_name in enumerate(order):
-            is_leaf = index == len(order) - 1
-            result = run_job(
-                paths,
-                step_name,
-                sync_first=False,
-                wait=not no_wait if is_leaf else True,
-            )
+        failed: RunResult | None = None
+        started_running: RunResult | None = None
+
+        def on_result(result: RunResult) -> None:
+            nonlocal failed, started_running
             if result.status == "running":
-                click.echo(
-                    f"Job {result.job_name!r} started "
-                    f"(run_id={result.run_id}, status=running)"
-                )
+                started_running = result
                 return
             if result.status == "succeeded":
-                completed.append(step_name)
+                completed.append(result.job_name)
                 click.echo(
                     f"Job {result.job_name!r} succeeded (run_id={result.run_id})"
                 )
-                continue
-            remaining = [name for name in order if name not in completed and name != step_name]
+                return
+            failed = result
+
+        chain = run_job_chain(
+            paths,
+            job_name,
+            sync_first=False,
+            wait=not no_wait,
+            on_wave=on_wave,
+            on_result=on_result,
+        )
+
+        if started_running is not None:
+            click.echo(
+                f"Job {started_running.job_name!r} started "
+                f"(run_id={started_running.run_id}, status=running)"
+            )
+            return
+
+        if failed is not None:
+            remaining = [
+                name
+                for name in chain.order
+                if name not in completed and name != failed.job_name
+            ]
             suffix = f"; skipped: {', '.join(remaining)}" if remaining else ""
             raise click.ClickException(
-                f"Job {result.job_name!r} failed (run_id={result.run_id}): "
-                f"{result.error_message}{suffix}"
+                f"Job {failed.job_name!r} failed (run_id={failed.run_id}): "
+                f"{failed.error_message}{suffix}"
             )
     except JobRunError as exc:
         raise click.ClickException(str(exc)) from exc
