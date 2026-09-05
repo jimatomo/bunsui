@@ -41,7 +41,7 @@ export function JobsPage() {
 
   useEffect(() => {
     if (!flash) return;
-    const t = window.setTimeout(() => setFlash(null), 5000);
+    const t = window.setTimeout(() => setFlash(null), 8000);
     return () => window.clearTimeout(t);
   }, [flash]);
 
@@ -55,22 +55,23 @@ export function JobsPage() {
         body: JSON.stringify({ no_deps: false }),
       });
       const body = (await res.json()) as RunResponse;
-      if (body.ok) {
+      // Set status before refreshing the list so the message is visible immediately.
+      if (res.ok && body.ok) {
         const status = body.status ?? "succeeded";
         setFlash({
           kind: "ok",
-          text: `Run ${name}: ${status}${body.run_id ? ` (${body.run_id.slice(0, 8)}…)` : ""}`,
+          text: `Run ${name}: ${status}${body.run_id ? ` (${String(body.run_id).slice(0, 8)}…)` : ""}`,
         });
       } else {
         setFlash({
           kind: "err",
-          text: body.error ?? `Run ${name} failed`,
+          text: body.error ?? `Run ${name} failed (HTTP ${res.status})`,
         });
       }
+      setRunning(null);
       await loadJobs();
     } catch {
       setFlash({ kind: "err", text: `Run ${name}: request failed` });
-    } finally {
       setRunning(null);
     }
   }

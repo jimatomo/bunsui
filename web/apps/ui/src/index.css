@@ -176,20 +176,21 @@ a {
 
 .flash {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   border-radius: 6px;
-  padding: 0.55rem 0.75rem;
+  padding: 0.65rem 0.85rem;
   margin: 0 0 1rem;
   border: 1px solid var(--line);
 }
 
 .flash-ok {
-  color: var(--accent);
-  background: rgba(111, 191, 138, 0.1);
+  color: var(--ink);
+  background: rgba(111, 191, 138, 0.18);
+  border-color: rgba(111, 191, 138, 0.45);
 }
 
 .flash-err {
-  color: #e8a0a0;
-  background: rgba(180, 70, 70, 0.12);
-  border-color: rgba(180, 70, 70, 0.28);
+  color: #f0c4c4;
+  background: rgba(180, 70, 70, 0.18);
+  border-color: rgba(180, 70, 70, 0.4);
 }
