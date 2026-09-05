@@ -416,6 +416,258 @@ def test_build_dbt_argv_includes_select() -> None:
     ]
 
 
+def test_parse_dbt_retry_policy_defaults() -> None:
+    from bunsui.runner import (
+        DEFAULT_DBT_RETRY_DELAY_SECONDS,
+        parse_dbt_retry_policy,
+    )
+
+    policy = parse_dbt_retry_policy({"command": "run"})
+    assert policy.retries == 0
+    assert policy.retry_delay_seconds == DEFAULT_DBT_RETRY_DELAY_SECONDS
+    assert policy.max_attempts == 1
+
+
+def test_parse_dbt_retry_policy_rejects_invalid() -> None:
+    from bunsui.runner import JobRunError, parse_dbt_retry_policy
+
+    with pytest.raises(JobRunError, match="retries"):
+        parse_dbt_retry_policy({"retries": -1})
+    with pytest.raises(JobRunError, match="retries"):
+        parse_dbt_retry_policy({"retries": 1.5})
+    with pytest.raises(JobRunError, match="retries"):
+        parse_dbt_retry_policy({"retries": True})
+    with pytest.raises(JobRunError, match="retry_delay_seconds"):
+        parse_dbt_retry_policy({"retry_delay_seconds": -0.1})
+    with pytest.raises(JobRunError, match="retry_delay_seconds"):
+        parse_dbt_retry_policy({"retry_delay_seconds": "slow"})
+
+
+def test_run_dbt_retries_zero_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """retries=0 (default): one attempt, no attempt banners, fail immediately."""
+    root = tmp_path / "dbt_r0"
+    root.mkdir()
+    paths = init_project(root, name="dbt_r0")
+    _clear_jobs_dir(root)
+    counter = tmp_path / "attempts_r0"
+    stub = _write_dbt_stub(
+        tmp_path / "bin_r0",
+        "#!/bin/sh\n"
+        f'echo x >> "{counter}"\n'
+        'echo "fail once"\n'
+        "exit 1\n",
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
+    sleeps: list[float] = []
+    monkeypatch.setattr("bunsui.runner.time.sleep", sleeps.append)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_r0",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {"command": "run", "retries": 0},
+        },
+    )
+
+    result = run_job(paths, "dbt_r0")
+    assert result.status == "failed"
+    assert "after" not in (result.error_message or "")
+    assert counter.read_text(encoding="utf-8").count("x") == 1
+    assert sleeps == []
+
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 1
+        log = conn.execute(
+            "SELECT path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert "attempt" not in content
+        assert "fail once" in content
+
+
+def test_run_dbt_retries_succeeds_on_second_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "dbt_r2_ok"
+    root.mkdir()
+    paths = init_project(root, name="dbt_r2_ok")
+    _clear_jobs_dir(root)
+    counter = tmp_path / "attempts_r2_ok"
+    stub = _write_dbt_stub(
+        tmp_path / "bin_r2_ok",
+        "#!/bin/sh\n"
+        f'echo x >> "{counter}"\n'
+        f'n=$(wc -l < "{counter}" | tr -d " ")\n'
+        'if [ "$n" -lt 2 ]; then\n'
+        '  echo "transient fail"\n'
+        "  exit 1\n"
+        "fi\n"
+        'echo "ok on retry"\n'
+        "exit 0\n",
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
+    sleeps: list[float] = []
+    monkeypatch.setattr("bunsui.runner.time.sleep", sleeps.append)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_retry_ok",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {
+                "command": "run",
+                "retries": 2,
+                "retry_delay_seconds": 1.5,
+            },
+        },
+    )
+
+    result = run_job(paths, "dbt_retry_ok")
+    assert result.status == "succeeded"
+    assert result.error_message is None
+    assert counter.read_text(encoding="utf-8").count("x") == 2
+    assert sleeps == [1.5]
+
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 1
+        row = conn.execute(
+            "SELECT status, error_message FROM job_runs WHERE id = ?",
+            (result.run_id,),
+        ).fetchone()
+        assert row["status"] == "succeeded"
+        assert row["error_message"] is None
+        log = conn.execute(
+            "SELECT path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert "===== dbt attempt 1/3 =====" in content
+        assert "===== dbt attempt 2/3 =====" in content
+        assert "transient fail" in content
+        assert "ok on retry" in content
+        assert "===== dbt attempt 3/3 =====" not in content
+
+
+def test_run_dbt_retries_exhausted_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "dbt_r_ex"
+    root.mkdir()
+    paths = init_project(root, name="dbt_r_ex")
+    _clear_jobs_dir(root)
+    counter = tmp_path / "attempts_ex"
+    stub = _write_dbt_stub(
+        tmp_path / "bin_ex",
+        "#!/bin/sh\n"
+        f'echo x >> "{counter}"\n'
+        'echo "always fail"\n'
+        "exit 1\n",
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
+    sleeps: list[float] = []
+    monkeypatch.setattr("bunsui.runner.time.sleep", sleeps.append)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_exhausted",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {
+                "command": "run",
+                "retries": 2,
+                "retry_delay_seconds": 0.25,
+            },
+        },
+    )
+
+    result = run_job(paths, "dbt_exhausted")
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "exited with code 1" in result.error_message
+    assert "after 3 attempts" in result.error_message
+    assert counter.read_text(encoding="utf-8").count("x") == 3
+    assert sleeps == [0.25, 0.25]
+
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 1
+        log = conn.execute(
+            "SELECT path FROM logs WHERE job_run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        content = (paths.root / log["path"]).read_text(encoding="utf-8")
+        assert content.count("===== dbt attempt") == 3
+        assert content.count("always fail") == 3
+
+
+def test_run_dbt_retry_delay_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """retry_delay_seconds is passed to sleep between failed attempts."""
+    root = tmp_path / "dbt_delay"
+    root.mkdir()
+    paths = init_project(root, name="dbt_delay")
+    _clear_jobs_dir(root)
+    stub = _write_dbt_stub(
+        tmp_path / "bin_delay",
+        "#!/bin/sh\necho boom\nexit 1\n",
+    )
+    monkeypatch.setenv("BUNSUI_DBT_BIN", stub)
+    sleeps: list[float] = []
+    monkeypatch.setattr("bunsui.runner.time.sleep", sleeps.append)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_delay",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {
+                "command": "build",
+                "retries": 1,
+                "retry_delay_seconds": 3,
+            },
+        },
+    )
+
+    result = run_job(paths, "dbt_delay")
+    assert result.status == "failed"
+    assert sleeps == [3.0]
+
+
+def test_run_dbt_invalid_retries_raises_before_run_row(
+    tmp_path: Path,
+) -> None:
+    from bunsui.runner import JobRunError
+
+    root = tmp_path / "dbt_bad_retry"
+    root.mkdir()
+    paths = init_project(root, name="dbt_bad_retry")
+    _clear_jobs_dir(root)
+    _write_job_file(
+        root,
+        "dbt.yaml",
+        {
+            "name": "dbt_bad_retry",
+            "type": "dbt",
+            "execution_mode": "sync",
+            "config": {"command": "run", "retries": -5},
+        },
+    )
+
+    with pytest.raises(JobRunError, match="retries"):
+        run_job(paths, "dbt_bad_retry")
+
+    with connect(paths.sqlite_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS c FROM job_runs").fetchone()["c"] == 0
+
+
 def test_run_dbt_real_duckdb_smoke(tmp_path: Path) -> None:
     """One offline smoke with real dbt-core + dbt-duckdb (skipped if dbt missing)."""
     if shutil.which("dbt") is None:
