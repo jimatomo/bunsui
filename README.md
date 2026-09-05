@@ -67,11 +67,13 @@ depends_on: []     # 他ジョブ名（`job run` がトポロジカル波で辿�
 config:
   command: build   # run / build / test など
   select: example
+  # retries: 2              # dbt only: native `dbt retry` attempts after failure (default 0)
+  # retry_delay_seconds: 2  # wait before each `dbt retry` (default 2; dbt only)
 ```
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
-`bunsui job run <name>` は yaml を sync したうえで **`depends_on` をトポロジカル波（wave）で辿り**、indegree 0 の兄弟は並列実行し、前提成功後に下流へ進みます（サイクル / 欠落は実行前にエラー。波内で失敗したら in-flight の兄弟は完了待ち、その後の波は開始しない）。`--no-deps` で従来どおり名前付きジョブだけを実行できます。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（チェイン中の上流 async も同様に待機）。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけ、成功・失敗いずれでも `target/run_results.json` を `artifacts/` に保持して **`assets` / `asset_materializations` に upsert** します。`--no-wait` で async の leaf を起動だけして戻ることもできます。サンプルは `example_dbt` → `example_python` の小さなチェインです（`example_python_async` は単独）。
+`bunsui job run <name>` は yaml を sync したうえで **`depends_on` をトポロジカル波（wave）で辿り**、indegree 0 の兄弟は並列実行し、前提成功後に下流へ進みます（サイクル / 欠落は実行前にエラー。波内で失敗したら in-flight の兄弟は完了待ち、その後の波は開始しない）。`--no-deps` で従来どおり名前付きジョブだけを実行できます。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（チェイン中の上流 async も同様に待機）。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけ、成功・失敗いずれでも `target/run_results.json` を `artifacts/` に保持して **`assets` / `asset_materializations` に upsert** します。CLI が非ゼロ終了した場合、`target/run_results.json` が残っていれば `config.retries`（追加の **`dbt retry`** 回数、デフォルト 0）と `config.retry_delay_seconds`（デフォルト 2）でネイティブ `dbt retry` を実行します（**同一 argv の再実行ではない**。**dbt のみ**。python には適用しません。1 本の `job_runs` 行で最終結果を記録）。`run_results.json` の保持は `ArtifactStore`（既定はローカル `artifacts/`）経由で、クラウドオブジェクトストレージへ差し替え可能な DI になっています。`--no-wait` で async の leaf を起動だけして戻ることもできます。サンプルは `example_dbt` → `example_python` の小さなチェインです（`example_python_async` は単独）。
 
 ```bash
 uv run bunsui job run example_python --project ../my-project          # dbt → python
@@ -125,14 +127,16 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets）、SQLite スキーマ、Hono API（読み取り + Jobs の **Run**）、React UI（Jobs の最終ラン表示 / Run ボタン / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets、**dbt native `dbt retry` + `ArtifactStore`**）、SQLite スキーマ、Hono API（読み取り + Jobs の **Run**）、React UI（Jobs の最終ラン表示 / Run ボタン / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
-- dbt リトライ・stdout の増分パース
+- stdout の増分 / ストリーミングパース（ログ UI 向け）
 - スケジューリング / cron
 - CSV/Parquet の DuckDB ロード
 - 本番スケジューリング
+- UI でのリトライ設定・python リトライ
+- S3/GCS などクラウド向け `ArtifactStore` 実装
 
 ## License
 
