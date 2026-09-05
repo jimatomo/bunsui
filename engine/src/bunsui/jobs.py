@@ -268,7 +268,7 @@ def example_job_files() -> dict[str, dict[str, Any]]:
                 # build = model + attached tests (feeds run_results → assets)
                 "command": "build",
                 "select": "example",
-                # dbt-only: retries / retry_delay_seconds (default 0 / 2)
+                # dbt-only: retries via native dbt retry / retry_delay_seconds (default 0 / 2)
             },
         },
         "example_python.yaml": {

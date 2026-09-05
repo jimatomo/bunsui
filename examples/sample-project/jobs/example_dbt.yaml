@@ -7,6 +7,6 @@ config:
   # build runs the model and its attached tests (run_results → assets)
   command: build
   select: example
-  # dbt-only optional retries (default 0 = no retry; python jobs ignore these):
+  # dbt-only: native `dbt retry` after non-zero exit (default 0 = no retry):
   # retries: 2
   # retry_delay_seconds: 2
