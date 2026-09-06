@@ -192,3 +192,66 @@ def test_run_dbt_real_duckdb_populates_assets(tmp_path: Path) -> None:
         ).fetchone()
         assert art is not None
         assert (paths.root / art["path"]).is_file()
+
+
+def test_retain_uses_injected_artifact_store(tmp_path: Path) -> None:
+    """retain/ingest accept an injected ArtifactStore (DI seam for cloud later)."""
+    from bunsui.artifacts import LocalArtifactStore
+
+    root = tmp_path / "store"
+    root.mkdir()
+    paths = init_project(root, name="store")
+    source = tmp_path / "incoming.json"
+    source.write_text('{"metadata": {}, "results": []}', encoding="utf-8")
+
+    # Root the store somewhere other than the default artifacts/ to prove injection.
+    alt_root = tmp_path / "alt_blobs"
+    store = LocalArtifactStore(alt_root)
+
+    with connect(paths.sqlite_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                id, name, job_type, config_json, depends_on_json,
+                execution_mode, enabled, created_at, updated_at
+            ) VALUES ('job1', 'j', 'dbt', '{}', '[]', 'sync', 1, 't', 't')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO job_runs (
+                id, job_id, status, trigger, started_at, finished_at,
+                error_message, created_at, updated_at
+            ) VALUES ('run1', 'job1', 'succeeded', 'manual', 't', 't', NULL, 't', 't')
+            """
+        )
+        from bunsui.run_results import retain_run_results_artifact
+
+        rel = retain_run_results_artifact(
+            conn,
+            paths=paths,
+            run_id="run1",
+            source=source,
+            created_at="2026-01-01T00:00:00+00:00",
+            retention_days=7,
+            store=store,
+        )
+        conn.commit()
+        assert rel == "artifacts/run1-run_results.json"
+        # Bytes landed in the injected store root, not necessarily paths.artifacts_dir
+        assert (alt_root / "run1-run_results.json").is_file()
+        art = conn.execute(
+            "SELECT path FROM artifacts WHERE job_run_id = ?",
+            ("run1",),
+        ).fetchone()
+        assert art["path"] == "artifacts/run1-run_results.json"
+
+
+def test_local_artifact_store_roundtrip(tmp_path: Path) -> None:
+    from bunsui.artifacts import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path / "blobs")
+    key = store.put("a/b.json", b'{"ok":true}', content_type="application/json")
+    assert key == "a/b.json"
+    assert store.exists(key)
+    assert store.get(key) == b'{"ok":true}'

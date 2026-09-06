@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync|run`` / ``bunsui schema``."""
+"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync|run|retry`` / ``bunsui schema``."""
 
 from __future__ import annotations
 
@@ -206,6 +206,36 @@ def job_run_cmd(
             )
     except JobRunError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+
+@job_group.command("retry")
+@click.argument("run_id")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project directory containing bunsui.yaml",
+)
+def job_retry_cmd(run_id: str, project_path: str) -> None:
+    """Re-run native ``dbt retry`` for a prior dbt ``job_runs`` id.
+
+    Creates a **new** job_runs row (trigger=retry). Restores ``run_results.json``
+    from the ArtifactStore for the prior run, then invokes ``dbt retry`` (not the
+    original build/run argv). Additional attempts honor the job's ``config.retries``.
+    Does not mutate the prior run. Python jobs are not supported.
+    """
+    from bunsui.paths import resolve_project
+    from bunsui.runner import JobRunError, retry_job_run
+
+    paths = resolve_project(project_path)
+    try:
+        result = retry_job_run(paths, run_id)
+    except JobRunError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _echo_run_result(result)
 
 
 def _echo_run_result(result: object) -> None:

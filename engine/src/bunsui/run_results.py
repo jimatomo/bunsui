@@ -1,7 +1,7 @@
 """Ingest dbt ``run_results.json`` into ``assets`` / ``asset_materializations``.
 
-After a dbt job run, copy ``target/run_results.json`` under ``artifacts/`` (when
-present), then upsert asset rows. Tests become children of their model when the
+After a dbt job run, retain ``target/run_results.json`` via ``ArtifactStore``
+(default: local ``artifacts/``), then upsert asset rows. Tests become children of their model when the
 relation is clear from ``manifest.json`` (``attached_node`` / ``depends_on``) or,
 as a fallback, when the same results list contains a single model.
 
@@ -16,7 +16,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from bunsui.paths import ARTIFACTS_DIRNAME, ProjectPaths
+from bunsui.artifacts import (
+    ArtifactStore,
+    local_artifact_store,
+    project_relative_artifact_path,
+    run_results_artifact_key,
+)
+from bunsui.paths import ProjectPaths
 
 # dbt result status → assets.status
 _ASSET_STATUS = {
@@ -170,15 +176,20 @@ def retain_run_results_artifact(
     source: Path,
     created_at: str,
     retention_days: int,
+    store: ArtifactStore | None = None,
 ) -> str:
-    """Copy ``run_results.json`` into ``artifacts/`` and insert an ``artifacts`` row.
+    """Persist ``run_results.json`` via ``ArtifactStore`` and insert an ``artifacts`` row.
 
-    Returns the relative path stored in SQLite.
+    Returns the project-relative path stored in SQLite (``artifacts/{key}``).
     """
-    paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    rel = f"{ARTIFACTS_DIRNAME}/{run_id}-run_results.json"
-    dest = paths.root / rel
-    dest.write_bytes(source.read_bytes())
+    artifact_store = store if store is not None else local_artifact_store(paths)
+    key = run_results_artifact_key(run_id)
+    artifact_store.put(
+        key,
+        source.read_bytes(),
+        content_type="application/json",
+    )
+    rel = project_relative_artifact_path(key)
 
     retained_until: str | None = None
     if retention_days > 0:
@@ -336,6 +347,7 @@ def ingest_dbt_run_results(
     created_at: str,
     retention_days: int = 30,
     run_results_path: Path | None = None,
+    store: ArtifactStore | None = None,
 ) -> list[str]:
     """Retain + parse ``run_results.json`` and upsert assets. No-op if file missing."""
     source = run_results_path or find_run_results_path(paths.dbt_dir)
@@ -356,6 +368,7 @@ def ingest_dbt_run_results(
         source=source,
         created_at=created_at,
         retention_days=retention_days,
+        store=store,
     )
 
     results = payload.get("results")
