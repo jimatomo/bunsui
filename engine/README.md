@@ -12,5 +12,6 @@ uv run bunsui job sync --project ../examples/sample-project
 uv run bunsui job run example_dbt --project ../examples/sample-project
 uv run bunsui job run example_python --project ../examples/sample-project
 uv run bunsui job run example_python_async --project ../examples/sample-project
+uv run bunsui job run example_duckdb_load --project ../examples/sample-project
 uv run pytest
 ```

@@ -2,7 +2,7 @@
 
 `uv run bunsui init` で生成したレイアウト例。API のローカル動作確認に使えます。
 
-`example_python` は `example_dbt` に依存します（`job run` が順に実行。`--no-deps` で単独実行）。
+`example_python` は `example_dbt` に依存します（`job run` が順に実行。`--no-deps` で単独実行）。`example_duckdb_load` は `data/orders.csv` を DuckDB の `orders` テーブルへ load します。
 
 ```bash
 cd engine
@@ -10,6 +10,7 @@ uv run bunsui job sync --project ../examples/sample-project
 uv run bunsui job run example_python --project ../examples/sample-project
 uv run bunsui job run example_python --no-deps --project ../examples/sample-project
 uv run bunsui job run example_python_async --project ../examples/sample-project
+uv run bunsui job run example_duckdb_load --project ../examples/sample-project
 
 export BUNSUI_PROJECT="$(pwd)/../examples/sample-project"
 cd ../web && bun run dev:api
