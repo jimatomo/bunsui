@@ -33,6 +33,7 @@ from bunsui.artifacts import (
     local_artifact_store,
     retry_run_results_key,
     retry_run_results_latest_key,
+    run_results_artifact_key,
 )
 from bunsui.run_results import find_run_results_path, ingest_dbt_run_results
 
@@ -532,6 +533,252 @@ def _store_run_log(
     return rel
 
 
+def _persist_attempt_run_results(
+    store: ArtifactStore,
+    paths: ProjectPaths,
+    *,
+    run_id: str,
+    attempt: int,
+    also_final: bool = False,
+) -> Path | None:
+    """If ``target/run_results.json`` exists, put per-attempt + latest keys.
+
+    When ``also_final`` is true, also overwrite the ingest retained key
+    (``run_results_artifact_key``). Returns the on-disk path, or ``None``
+    when the file is missing (do not invent one).
+    """
+    rr_path = find_run_results_path(paths.dbt_dir)
+    if rr_path is None:
+        return None
+    blob = rr_path.read_bytes()
+    store.put(
+        retry_run_results_key(run_id, attempt),
+        blob,
+        content_type="application/json",
+    )
+    store.put(
+        retry_run_results_latest_key(run_id),
+        blob,
+        content_type="application/json",
+    )
+    if also_final:
+        store.put(
+            run_results_artifact_key(run_id),
+            blob,
+            content_type="application/json",
+        )
+    return rr_path
+
+
+def _restore_run_results_from_store(
+    store: ArtifactStore,
+    paths: ProjectPaths,
+    *,
+    key: str,
+) -> None:
+    """Write ArtifactStore blob into ``dbt/target/run_results.json``."""
+    blob = store.get(key)
+    target = paths.dbt_dir / "target" / "run_results.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(blob)
+
+
+def _resolve_prior_run_results_key(
+    store: ArtifactStore,
+    source_run_id: str,
+) -> str:
+    """Prefer final retained key, else latest retry key."""
+    final_key = run_results_artifact_key(source_run_id)
+    if store.exists(final_key):
+        return final_key
+    latest_key = retry_run_results_latest_key(source_run_id)
+    if store.exists(latest_key):
+        return latest_key
+    raise JobRunError(
+        f"no run_results.json artifact found for run {source_run_id!r} "
+        f"(looked for {final_key!r} and {latest_key!r})"
+    )
+
+
+def _finish_dbt_run(
+    paths: ProjectPaths,
+    *,
+    run_id: str,
+    job_name: str,
+    status: str,
+    error_message: str | None,
+    log_parts: list[str],
+    store: ArtifactStore,
+) -> RunResult:
+    finished = utc_now_iso()
+    retention_days = _artifact_retention_days(paths)
+    with connect(paths.sqlite_path) as conn:
+        _store_run_log(
+            conn,
+            paths=paths,
+            run_id=run_id,
+            output="".join(log_parts),
+            created_at=finished,
+        )
+        _finish_run(
+            conn,
+            run_id=run_id,
+            status=status,
+            error_message=error_message,
+            finished_at=finished,
+        )
+        # Final attempt only for asset ingest; retain uses store + SQLite row.
+        ingest_dbt_run_results(
+            conn,
+            paths=paths,
+            run_id=run_id,
+            created_at=finished,
+            retention_days=retention_days,
+            store=store,
+        )
+        conn.commit()
+    return RunResult(
+        run_id=run_id,
+        job_name=job_name,
+        status=status,
+        error_message=error_message,
+    )
+
+
+def _run_dbt_attempt_loop(
+    paths: ProjectPaths,
+    *,
+    run_id: str,
+    job_name: str,
+    config: dict[str, Any],
+    first_argv: list[str],
+    store: ArtifactStore,
+    log_parts: list[str],
+    source_run_id: str | None = None,
+) -> RunResult:
+    """Run first_argv then native ``dbt retry`` for remaining attempts.
+
+    After **every** attempt (success or failure), persist ``run_results.json``
+    to the ArtifactStore when present. Restore from the store **only** before
+    a retry attempt. Asset ingest runs once after the final attempt.
+    """
+    retry_argv = build_dbt_retry_argv(dbt_bin=first_argv[0])
+    policy = parse_dbt_retry_policy(config)
+    max_attempts = policy.max_attempts
+    last_combined = ""
+    last_returncode = 1
+    attempts_used = 0
+
+    if source_run_id is not None:
+        log_parts.append(f"retry_of={source_run_id}\n")
+
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            time.sleep(policy.retry_delay_seconds)
+            latest_key = retry_run_results_latest_key(run_id)
+            try:
+                _restore_run_results_from_store(store, paths, key=latest_key)
+            except FileNotFoundError as exc:
+                message = (
+                    "dbt retry aborted: persisted run_results.json is missing "
+                    f"from ArtifactStore key {latest_key!r}"
+                )
+                log_parts.append(f"{message}\n{exc}\n")
+                return _finish_dbt_run(
+                    paths,
+                    run_id=run_id,
+                    job_name=job_name,
+                    status="failed",
+                    error_message=message,
+                    log_parts=log_parts,
+                    store=store,
+                )
+            argv = retry_argv
+        else:
+            argv = first_argv
+
+        attempts_used = attempt
+        if max_attempts > 1 or source_run_id is not None:
+            log_parts.append(f"===== dbt attempt {attempt}/{max_attempts} =====\n")
+            log_parts.append(f"argv: {' '.join(argv)}\n")
+
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=str(paths.dbt_dir),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            message = f"dbt executable not found: {argv[0]}"
+            log_parts.append(f"{message}\n{exc}\n")
+            return _finish_dbt_run(
+                paths,
+                run_id=run_id,
+                job_name=job_name,
+                status="failed",
+                error_message=message,
+                log_parts=log_parts,
+                store=store,
+            )
+
+        combined = _combine_dbt_streams(completed.stdout or "", completed.stderr or "")
+        last_combined = combined
+        last_returncode = completed.returncode
+        chunk = combined if combined.endswith("\n") or not combined else combined + "\n"
+        log_parts.append(chunk)
+
+        # Always persist after every attempt when the file exists (success or fail).
+        is_final_attempt = completed.returncode == 0 or attempt >= max_attempts
+        rr_path = _persist_attempt_run_results(
+            store,
+            paths,
+            run_id=run_id,
+            attempt=attempt,
+            also_final=is_final_attempt,
+        )
+
+        if completed.returncode == 0:
+            break
+
+        # Failed with retries remaining: need run_results to feed native dbt retry.
+        if attempt < max_attempts and rr_path is None:
+            message = (
+                "dbt failed and target/run_results.json is missing; "
+                "cannot invoke dbt retry"
+            )
+            log_parts.append(f"{message}\n")
+            return _finish_dbt_run(
+                paths,
+                run_id=run_id,
+                job_name=job_name,
+                status="failed",
+                error_message=message,
+                log_parts=log_parts,
+                store=store,
+            )
+
+    if last_returncode == 0:
+        status = "succeeded"
+        error_message = None
+    else:
+        status = "failed"
+        error_message = _short_dbt_error(last_returncode, last_combined)
+        if attempts_used > 1:
+            error_message = f"{error_message} (after {attempts_used} attempts)"
+
+    return _finish_dbt_run(
+        paths,
+        run_id=run_id,
+        job_name=job_name,
+        status=status,
+        error_message=error_message,
+        log_parts=log_parts,
+        store=store,
+    )
+
+
 def _run_sync_dbt(
     paths: ProjectPaths,
     *,
@@ -549,9 +796,6 @@ def _run_sync_dbt(
         raise JobRunError(f"missing dbt_project.yml in {paths.dbt_dir}")
 
     initial_argv = build_dbt_argv(config)
-    retry_argv = build_dbt_retry_argv(dbt_bin=initial_argv[0])
-    policy = parse_dbt_retry_policy(config)
-    max_attempts = policy.max_attempts
     store = artifact_store if artifact_store is not None else local_artifact_store(paths)
     now = utc_now_iso()
     with connect(paths.sqlite_path) as conn:
@@ -563,205 +807,118 @@ def _run_sync_dbt(
             now=now,
         )
 
-    log_parts: list[str] = []
-    last_combined = ""
-    last_returncode = 1
-    attempts_used = 0
-    target_run_results = paths.dbt_dir / "target" / "run_results.json"
-
-    for attempt in range(1, max_attempts + 1):
-        if attempt > 1:
-            time.sleep(policy.retry_delay_seconds)
-            latest_key = retry_run_results_latest_key(run_id)
-            try:
-                blob = store.get(latest_key)
-            except FileNotFoundError as exc:
-                finished = utc_now_iso()
-                message = (
-                    "dbt retry aborted: persisted run_results.json is missing "
-                    f"from ArtifactStore key {latest_key!r}"
-                )
-                log_parts.append(f"{message}\n{exc}\n")
-                with connect(paths.sqlite_path) as conn:
-                    _store_run_log(
-                        conn,
-                        paths=paths,
-                        run_id=run_id,
-                        output="".join(log_parts),
-                        created_at=finished,
-                    )
-                    _finish_run(
-                        conn,
-                        run_id=run_id,
-                        status="failed",
-                        error_message=message,
-                        finished_at=finished,
-                    )
-                    ingest_dbt_run_results(
-                        conn,
-                        paths=paths,
-                        run_id=run_id,
-                        created_at=finished,
-                        store=store,
-                    )
-                    conn.commit()
-                return RunResult(
-                    run_id=run_id,
-                    job_name=job_name,
-                    status="failed",
-                    error_message=message,
-                )
-            target_run_results.parent.mkdir(parents=True, exist_ok=True)
-            target_run_results.write_bytes(blob)
-            argv = retry_argv
-        else:
-            argv = initial_argv
-
-        attempts_used = attempt
-        if max_attempts > 1:
-            log_parts.append(f"===== dbt attempt {attempt}/{max_attempts} =====\n")
-            log_parts.append(f"argv: {' '.join(argv)}\n")
-
-        try:
-            completed = subprocess.run(
-                argv,
-                cwd=str(paths.dbt_dir),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError as exc:
-            # Missing binary is not transient — fail immediately (no further retries).
-            finished = utc_now_iso()
-            message = f"dbt executable not found: {argv[0]}"
-            log_parts.append(f"{message}\n{exc}\n")
-            with connect(paths.sqlite_path) as conn:
-                _store_run_log(
-                    conn,
-                    paths=paths,
-                    run_id=run_id,
-                    output="".join(log_parts),
-                    created_at=finished,
-                )
-                _finish_run(
-                    conn,
-                    run_id=run_id,
-                    status="failed",
-                    error_message=message,
-                    finished_at=finished,
-                )
-            return RunResult(
-                run_id=run_id,
-                job_name=job_name,
-                status="failed",
-                error_message=message,
-            )
-
-        combined = _combine_dbt_streams(completed.stdout or "", completed.stderr or "")
-        last_combined = combined
-        last_returncode = completed.returncode
-        chunk = combined if combined.endswith("\n") or not combined else combined + "\n"
-        log_parts.append(chunk)
-
-        if completed.returncode == 0:
-            break
-
-        # Failed attempt: persist run_results for a possible native dbt retry.
-        if attempt < max_attempts:
-            rr_path = find_run_results_path(paths.dbt_dir)
-            if rr_path is None:
-                finished = utc_now_iso()
-                message = (
-                    "dbt failed and target/run_results.json is missing; "
-                    "cannot invoke dbt retry"
-                )
-                log_parts.append(f"{message}\n")
-                retention_days = _artifact_retention_days(paths)
-                with connect(paths.sqlite_path) as conn:
-                    _store_run_log(
-                        conn,
-                        paths=paths,
-                        run_id=run_id,
-                        output="".join(log_parts),
-                        created_at=finished,
-                    )
-                    _finish_run(
-                        conn,
-                        run_id=run_id,
-                        status="failed",
-                        error_message=message,
-                        finished_at=finished,
-                    )
-                    ingest_dbt_run_results(
-                        conn,
-                        paths=paths,
-                        run_id=run_id,
-                        created_at=finished,
-                        retention_days=retention_days,
-                        store=store,
-                    )
-                    conn.commit()
-                return RunResult(
-                    run_id=run_id,
-                    job_name=job_name,
-                    status="failed",
-                    error_message=message,
-                )
-            blob = rr_path.read_bytes()
-            store.put(
-                retry_run_results_key(run_id, attempt),
-                blob,
-                content_type="application/json",
-            )
-            store.put(
-                retry_run_results_latest_key(run_id),
-                blob,
-                content_type="application/json",
-            )
-
-    finished = utc_now_iso()
-    if last_returncode == 0:
-        status = "succeeded"
-        error_message = None
-    else:
-        status = "failed"
-        error_message = _short_dbt_error(last_returncode, last_combined)
-        if attempts_used > 1:
-            error_message = f"{error_message} (after {attempts_used} attempts)"
-
-    retention_days = _artifact_retention_days(paths)
-
-    with connect(paths.sqlite_path) as conn:
-        _store_run_log(
-            conn,
-            paths=paths,
-            run_id=run_id,
-            output="".join(log_parts),
-            created_at=finished,
-        )
-        _finish_run(
-            conn,
-            run_id=run_id,
-            status=status,
-            error_message=error_message,
-            finished_at=finished,
-        )
-        # Final attempt only: ingest whatever run_results.json dbt left behind.
-        ingest_dbt_run_results(
-            conn,
-            paths=paths,
-            run_id=run_id,
-            created_at=finished,
-            retention_days=retention_days,
-            store=store,
-        )
-        conn.commit()
-
-    return RunResult(
+    return _run_dbt_attempt_loop(
+        paths,
         run_id=run_id,
         job_name=job_name,
-        status=status,
-        error_message=error_message,
+        config=config,
+        first_argv=initial_argv,
+        store=store,
+        log_parts=[],
+    )
+
+
+def retry_job_run(
+    paths: ProjectPaths,
+    source_run_id: str,
+    *,
+    artifact_store: ArtifactStore | None = None,
+) -> RunResult:
+    """Start a **new** dbt job run that invokes native ``dbt retry`` from a prior run.
+
+    Looks up ``job_runs`` / ``jobs`` by ``source_run_id`` (must be ``type=dbt``),
+    restores ``run_results.json`` from the ArtifactStore (final retained key, else
+    latest), inserts a new ``job_runs`` row with ``trigger='retry'``, then runs
+    ``dbt retry``. Additional attempts honor the job's ``config.retries`` the same
+    way as an automatic in-run retry (subsequent attempts are also ``dbt retry``).
+
+    Does not mutate the prior run row. Prefer no schema migration: the source id
+    is recorded in the new run's log as ``retry_of=<source_run_id>``.
+    """
+    store = artifact_store if artifact_store is not None else local_artifact_store(paths)
+    with connect(paths.sqlite_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                r.id AS run_id,
+                r.job_id AS job_id,
+                r.status AS run_status,
+                j.name AS job_name,
+                j.job_type AS job_type,
+                j.config_json AS config_json,
+                j.execution_mode AS execution_mode,
+                j.enabled AS enabled
+            FROM job_runs r
+            JOIN jobs j ON j.id = r.job_id
+            WHERE r.id = ?
+            """,
+            (source_run_id,),
+        ).fetchone()
+        if row is None:
+            raise JobRunError(f"job run {source_run_id!r} not found in SQLite")
+        if row["job_type"] != "dbt":
+            raise JobRunError(
+                f"job run {source_run_id!r} belongs to job {row['job_name']!r} "
+                f"with type={row['job_type']!r}; only dbt runs support retry"
+            )
+        if int(row["enabled"]) != 1:
+            raise JobRunError(f"job {row['job_name']!r} is disabled")
+        if row["execution_mode"] != "sync":
+            raise JobRunError(
+                f"job {row['job_name']!r} has execution_mode={row['execution_mode']!r}; "
+                "dbt jobs only support sync for now"
+            )
+        try:
+            config = json.loads(row["config_json"] or "{}")
+        except json.JSONDecodeError as exc:
+            raise JobRunError(
+                f"job {row['job_name']!r} has invalid config_json: {exc}"
+            ) from exc
+        if not isinstance(config, dict):
+            raise JobRunError(f"job {row['job_name']!r} config must be a JSON object")
+        # Validate retry policy before inserting a run row.
+        parse_dbt_retry_policy(config)
+        job_id = str(row["job_id"])
+        job_name = str(row["job_name"])
+
+    if not paths.dbt_dir.is_dir():
+        raise JobRunError(f"dbt directory not found: {paths.dbt_dir}")
+    project_yml = paths.dbt_dir / "dbt_project.yml"
+    if not project_yml.is_file():
+        raise JobRunError(f"missing dbt_project.yml in {paths.dbt_dir}")
+
+    try:
+        artifact_key = _resolve_prior_run_results_key(store, source_run_id)
+        _restore_run_results_from_store(store, paths, key=artifact_key)
+    except FileNotFoundError as exc:
+        raise JobRunError(
+            f"no run_results.json artifact found for run {source_run_id!r}"
+        ) from exc
+
+    new_run_id = str(uuid.uuid4())
+    now = utc_now_iso()
+    with connect(paths.sqlite_path) as conn:
+        _insert_running_run(
+            conn,
+            run_id=new_run_id,
+            job_id=job_id,
+            trigger="retry",
+            now=now,
+        )
+
+    retry_argv = build_dbt_retry_argv()
+    log_parts = [
+        f"restored_artifact_key={artifact_key}\n",
+    ]
+    return _run_dbt_attempt_loop(
+        paths,
+        run_id=new_run_id,
+        job_name=job_name,
+        config=config,
+        first_argv=retry_argv,
+        store=store,
+        log_parts=log_parts,
+        source_run_id=source_run_id,
     )
 
 

@@ -7,6 +7,8 @@ config:
   # build runs the model and its attached tests (run_results → assets)
   command: build
   select: example
-  # dbt-only: native `dbt retry` after non-zero exit (default 0 = no retry):
+  # dbt-only: native `dbt retry` after non-zero exit (default 0 = no retry).
+  # run_results.json is always retained to ArtifactStore; restore only on retry.
+  # Manual: `bunsui job retry <run_id>`
   # retries: 2
   # retry_delay_seconds: 2
