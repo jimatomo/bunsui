@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS assets (
     -- Dagster-inspired unit of status. asset_key is unique (e.g. model.proj.orders).
     id TEXT PRIMARY KEY,
     asset_key TEXT NOT NULL UNIQUE,
-    asset_type TEXT,  -- model | test | seed | snapshot | source | other
+    asset_type TEXT,  -- model | test | seed | snapshot | source | table | other
     status TEXT NOT NULL DEFAULT 'unknown',
         -- unknown | pending | materializing | materialized | failed | skipped
     parent_asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- Execution unit: later can run dbt or arbitrary Python.
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    job_type TEXT NOT NULL,  -- dbt | python
+    job_type TEXT NOT NULL,  -- dbt | python | duckdb_load
     config_json TEXT,  -- command args, callable path, dbt select, etc.
     depends_on_json TEXT,  -- ordered JSON array of job names/ids
     execution_mode TEXT NOT NULL DEFAULT 'sync',  -- sync | async

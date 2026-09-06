@@ -1,0 +1,9 @@
+# bunsui job declaration (synced with `bunsui job sync`)
+name: example_duckdb_load
+type: duckdb_load
+execution_mode: sync
+depends_on: []
+config:
+  path: data/orders.csv
+  table: orders
+  mode: replace
