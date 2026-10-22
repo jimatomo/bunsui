@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from bunsui.cron import DEFAULT_SCHEDULE_TIMEZONE, parse_schedule_fields
 from bunsui.db import bootstrap_sqlite, connect, utc_now_iso
 from bunsui.paths import JOBS_DIRNAME, ProjectPaths
 
@@ -34,6 +35,8 @@ class JobDecl:
     depends_on: list[str]
     config: dict[str, Any]
     source: str = INLINE_SOURCE
+    schedule: str | None = None  # standard 5-field cron, or None
+    schedule_timezone: str = DEFAULT_SCHEDULE_TIMEZONE
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,8 @@ def _parse_job_mapping(
     if not isinstance(config_obj, dict):
         raise ValueError(f"{source}: job {name!r} config must be a mapping")
 
+    cron, schedule_tz = parse_schedule_fields(item, source=source, job_name=name)
+
     return JobDecl(
         name=name,
         job_type=str(job_type),
@@ -113,6 +118,8 @@ def _parse_job_mapping(
         depends_on=depends_on,
         config=dict(config_obj),
         source=source,
+        schedule=cron,
+        schedule_timezone=schedule_tz,
     )
 
 
@@ -314,12 +321,101 @@ def write_example_job_files(directory: Path) -> None:
         path.write_text(header + yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
 
 
+def _sync_job_schedules(
+    conn: Any,
+    decls: list[JobDecl],
+    *,
+    name_to_id: dict[str, str],
+    now_iso: str,
+) -> None:
+    """Upsert / delete ``job_schedules`` rows to match declarations.
+
+    When cron or timezone changes, ``next_due_at`` is recomputed from *now*
+    (UTC). Unchanged schedules keep ``last_fired_at`` / ``next_due_at``.
+    Jobs without a schedule (or disabled) lose their schedule row.
+    """
+    from datetime import datetime, timezone
+
+    from bunsui.cron import compute_next_due
+
+    now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+    scheduled_ids: set[str] = set()
+
+    for decl in decls:
+        job_id = name_to_id.get(decl.name)
+        if job_id is None:
+            continue
+        if not decl.schedule:
+            continue
+        scheduled_ids.add(job_id)
+        prev = conn.execute(
+            "SELECT cron, timezone, last_fired_at, next_due_at FROM job_schedules "
+            "WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if prev is None:
+            next_due = compute_next_due(
+                decl.schedule, decl.schedule_timezone, after=now_dt
+            )
+            conn.execute(
+                """
+                INSERT INTO job_schedules (
+                    job_id, cron, timezone, last_fired_at, next_due_at, updated_at
+                ) VALUES (?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    job_id,
+                    decl.schedule,
+                    decl.schedule_timezone,
+                    next_due.isoformat(),
+                    now_iso,
+                ),
+            )
+            continue
+        same = (
+            str(prev["cron"]) == decl.schedule
+            and str(prev["timezone"]) == decl.schedule_timezone
+        )
+        if same:
+            continue
+        next_due = compute_next_due(
+            decl.schedule, decl.schedule_timezone, after=now_dt
+        )
+        conn.execute(
+            """
+            UPDATE job_schedules SET
+                cron = ?,
+                timezone = ?,
+                next_due_at = ?,
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                decl.schedule,
+                decl.schedule_timezone,
+                next_due.isoformat(),
+                now_iso,
+                job_id,
+            ),
+        )
+
+    # Drop schedules for jobs that no longer declare one (or were never in decls).
+    existing = conn.execute("SELECT job_id FROM job_schedules").fetchall()
+    for row in existing:
+        if str(row["job_id"]) not in scheduled_ids:
+            conn.execute(
+                "DELETE FROM job_schedules WHERE job_id = ?",
+                (row["job_id"],),
+            )
+
+
 def sync_jobs(paths: ProjectPaths, config: dict[str, Any] | None = None) -> SyncResult:
     """Upsert yaml jobs into SQLite; disable rows no longer listed.
 
     Idempotent: re-running with the same declarations yields the same enabled rows.
     Jobs removed from yaml/files are ``enabled=0`` (not deleted) so future run
-    history can keep foreign keys.
+    history can keep foreign keys. Optional ``schedule`` fields are validated and
+    mirrored into ``job_schedules``.
     """
     from bunsui.config import load_config
 
@@ -402,6 +498,13 @@ def sync_jobs(paths: ProjectPaths, config: dict[str, Any] | None = None) -> Sync
                     (now, name),
                 )
                 disabled += 1
+
+        # Refresh name → id after inserts.
+        name_to_id = {
+            str(r["name"]): str(r["id"])
+            for r in conn.execute("SELECT id, name FROM jobs").fetchall()
+        }
+        _sync_job_schedules(conn, decls, name_to_id=name_to_id, now_iso=now)
 
         conn.commit()
 

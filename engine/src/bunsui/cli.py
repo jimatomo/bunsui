@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``bunsui init`` / ``bunsui job sync|run|retry`` / ``bunsui schema``."""
+"""CLI entrypoint: ``bunsui init`` / ``job`` / ``schedule`` / ``schema``."""
 
 from __future__ import annotations
 
@@ -255,6 +255,129 @@ def _echo_run_result(result: object) -> None:
         f"Job {result.job_name!r} failed (run_id={result.run_id}): "
         f"{result.error_message}"
     )
+
+
+@main.group("schedule")
+def schedule_group() -> None:
+    """Foreground cron scheduler (list / run)."""
+
+
+@schedule_group.command("list")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project directory containing bunsui.yaml",
+)
+@click.option(
+    "--no-sync",
+    is_flag=True,
+    help="Skip yaml→SQLite sync before listing",
+)
+def schedule_list_cmd(project_path: str, no_sync: bool) -> None:
+    """List jobs with a cron schedule and their next fire times (UTC).
+
+    Syncs yaml first unless ``--no-sync``. Default timezone for schedules without
+    an explicit ``timezone`` is UTC. Missed slots are not backfilled: see
+    ``bunsui schedule run``.
+    """
+    from bunsui.jobs import sync_jobs
+    from bunsui.paths import resolve_project
+    from bunsui.schedule import list_schedules
+
+    paths = resolve_project(project_path)
+    if not no_sync:
+        sync_jobs(paths)
+    rows = list_schedules(paths)
+    if not rows:
+        click.echo("No scheduled jobs.")
+        return
+    click.echo(
+        f"{'JOB':<28} {'CRON':<20} {'TZ':<16} {'NEXT_DUE_UTC':<25} LAST_FIRED_UTC"
+    )
+    for s in rows:
+        last = s.last_fired_at or "-"
+        click.echo(
+            f"{s.job_name:<28} {s.cron:<20} {s.timezone:<16} "
+            f"{s.next_due_at:<25} {last}"
+        )
+
+
+@schedule_group.command("run")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project directory containing bunsui.yaml",
+)
+@click.option(
+    "--once",
+    is_flag=True,
+    help="Poll once and exit (no sleep loop)",
+)
+@click.option(
+    "--interval",
+    "interval_seconds",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds between polls when looping",
+)
+@click.option(
+    "--no-sync",
+    is_flag=True,
+    help="Skip yaml→SQLite sync before the first tick",
+)
+def schedule_run_cmd(
+    project_path: str,
+    once: bool,
+    interval_seconds: float,
+    no_sync: bool,
+) -> None:
+    """Run the foreground scheduler: fire due jobs with ``trigger=schedule``.
+
+    Persists ``last_fired_at`` / ``next_due_at`` in SQLite so a restart never
+    double-fires the same slot. Missed slots while down are **not** backfilled:
+    on catch-up a job runs at most once, then ``next_due`` jumps to the next
+    future slot. A job with a still-active run (pending/running) is skipped.
+    """
+    from bunsui.paths import resolve_project
+    from bunsui.schedule import run_scheduler_loop
+
+    if interval_seconds <= 0:
+        raise click.ClickException("--interval must be positive")
+
+    paths = resolve_project(project_path)
+    click.echo(
+        f"Scheduler starting for {paths.root} "
+        f"({'once' if once else f'interval={interval_seconds}s'})"
+    )
+
+    ticks = run_scheduler_loop(
+        paths,
+        interval_seconds=interval_seconds,
+        once=once,
+        sync_first=not no_sync,
+    )
+    for tick in ticks:
+        for name in tick.skipped_overlap:
+            click.echo(f"skip {name!r}: previous run still active")
+        for name in tick.fired:
+            click.echo(f"fired {name!r}")
+        for result in tick.results:
+            if result.status == "failed":
+                click.echo(
+                    f"  chain {result.job_name!r} failed: {result.error_message}",
+                    err=True,
+                )
+            elif result.status == "succeeded":
+                click.echo(f"  chain {result.job_name!r} succeeded")
+    if once and ticks and not ticks[0].fired and not ticks[0].skipped_overlap:
+        click.echo("No jobs due.")
 
 
 if __name__ == "__main__":

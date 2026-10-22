@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bunsui.db.schema import EXPECTED_TABLES, SCHEMA_SQL, SCHEMA_VERSION
+from bunsui.db.schema import EXPECTED_TABLES, MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION
 
 
 def utc_now_iso() -> str:
@@ -23,18 +23,40 @@ def connect(sqlite_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
-def init_schema(conn: sqlite3.Connection) -> int:
-    """Apply schema DDL if not already at SCHEMA_VERSION. Returns applied version."""
-    conn.executescript(SCHEMA_SQL)
+def _current_schema_version(conn: sqlite3.Connection) -> int:
     row = conn.execute(
-        "SELECT version FROM schema_migrations WHERE version = ?",
-        (SCHEMA_VERSION,),
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
     ).fetchone()
     if row is None:
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-            (SCHEMA_VERSION, utc_now_iso()),
-        )
+        return 0
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations"
+    ).fetchone()
+    return int(row["v"] if isinstance(row, sqlite3.Row) else row[0])
+
+
+def init_schema(conn: sqlite3.Connection) -> int:
+    """Apply schema DDL and any pending migrations. Returns applied version.
+
+    Fresh installs run ``SCHEMA_SQL`` (CREATE IF NOT EXISTS) then record every
+    version up to ``SCHEMA_VERSION``. Existing DBs apply ``MIGRATIONS`` for each
+    missing version so upgrades stay incremental.
+    """
+    conn.executescript(SCHEMA_SQL)
+    current = _current_schema_version(conn)
+    for version in range(current + 1, SCHEMA_VERSION + 1):
+        sql = MIGRATIONS.get(version)
+        if sql:
+            conn.executescript(sql)
+        existing = conn.execute(
+            "SELECT version FROM schema_migrations WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                (version, utc_now_iso()),
+            )
     conn.commit()
     return SCHEMA_VERSION
 
