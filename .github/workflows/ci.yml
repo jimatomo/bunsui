@@ -73,6 +73,28 @@ con=duckdb.connect('/tmp/bunsui-ci/.bunsui/warehouse.duckdb')
 assert con.execute('select count(*) from orders').fetchone()[0]==3
 con.close()
 "
+          # Schedule smoke: declare a cron, force due, fire once with trigger=schedule
+          printf '%s\n' 'name: scheduled_smoke' 'type: python' 'execution_mode: sync' 'depends_on: []' 'schedule: "* * * * *"' 'config:' '  callable: sample:main' > /tmp/bunsui-ci/jobs/scheduled_smoke.yaml
+          uv run bunsui job sync --project /tmp/bunsui-ci
+          uv run python -c "
+import sqlite3
+from datetime import datetime, timezone, timedelta
+c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite')
+past=(datetime.now(timezone.utc)-timedelta(minutes=2)).replace(microsecond=0).isoformat()
+n=c.execute('update job_schedules set next_due_at=? where job_id=(select id from jobs where name=\"scheduled_smoke\")',(past,)).rowcount
+assert n==1, n
+c.commit()
+"
+          uv run bunsui schedule list --project /tmp/bunsui-ci
+          uv run bunsui schedule run --once --no-sync --project /tmp/bunsui-ci
+          uv run python -c "
+import sqlite3
+c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite')
+r=c.execute(\"select r.trigger, r.status from job_runs r join jobs j on j.id=r.job_id where j.name='scheduled_smoke'\").fetchone()
+assert r==('schedule','succeeded'), r
+s=c.execute('select last_fired_at, next_due_at from job_schedules s join jobs j on j.id=s.job_id where j.name=\"scheduled_smoke\"').fetchone()
+assert s and s[0] and s[1], s
+"
 
   web:
     runs-on: ubuntu-latest

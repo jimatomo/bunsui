@@ -33,7 +33,100 @@ def test_bootstrap_sqlite_is_idempotent(tmp_path: Path) -> None:
     bootstrap_sqlite(sqlite_path)
     with connect(sqlite_path) as conn:
         versions = conn.execute("SELECT COUNT(*) AS c FROM schema_migrations").fetchone()
-        assert versions["c"] == 1
+        assert versions["c"] == SCHEMA_VERSION
+        assert "job_schedules" in set(list_tables(conn))
+
+
+def test_schema_upgrade_adds_job_schedules(tmp_path: Path) -> None:
+    """Existing v1 DBs gain job_schedules when bootstrapped with SCHEMA_VERSION=2."""
+    from bunsui.db import utc_now_iso
+
+    sqlite_path = tmp_path / "legacy.sqlite"
+    with connect(sqlite_path) as conn:
+        conn.executescript(
+            """
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                job_type TEXT NOT NULL,
+                config_json TEXT,
+                depends_on_json TEXT,
+                execution_mode TEXT NOT NULL DEFAULT 'sync',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE job_runs (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                trigger TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE assets (
+                id TEXT PRIMARY KEY,
+                asset_key TEXT NOT NULL UNIQUE,
+                asset_type TEXT,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                parent_asset_id TEXT,
+                last_materialized_at TEXT,
+                last_run_id TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE asset_materializations (
+                id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                job_run_id TEXT,
+                status TEXT NOT NULL,
+                materialized_at TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE logs (
+                id TEXT PRIMARY KEY,
+                job_run_id TEXT NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+                log_kind TEXT NOT NULL DEFAULT 'stdout',
+                path TEXT,
+                blob_pointer TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE artifacts (
+                id TEXT PRIMARY KEY,
+                job_run_id TEXT NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+                artifact_type TEXT NOT NULL,
+                path TEXT NOT NULL,
+                retained_until TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)",
+            (utc_now_iso(),),
+        )
+        conn.commit()
+        assert "job_schedules" not in set(list_tables(conn))
+
+    bootstrap_sqlite(sqlite_path)
+    with connect(sqlite_path) as conn:
+        assert "job_schedules" in set(list_tables(conn))
+        versions = {
+            r["version"]
+            for r in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        assert 1 in versions
+        assert SCHEMA_VERSION in versions
 
 
 def test_init_project_layout(tmp_path: Path) -> None:

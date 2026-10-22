@@ -10,13 +10,16 @@ API and runners poll SQLite.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Product notes embedded next to DDL:
 # - assets.parent_asset_id: dbt tests are children of their model asset;
 #   a test failure should surface as an error on the parent model.
 # - jobs.execution_mode: 'sync' waits for completion; 'async' returns after
 #   spawn and completion is detected by polling job_runs.status.
+# - job_schedules: optional cron state per job (last_fired / next_due).
+#   Missed slots while the scheduler was down are not backfilled: on catch-up
+#   a due job runs at most once, then next_due advances to the next future slot.
 # - artifacts: retain run_results.json (and similar) under a retention window.
 # - logs: prefer filesystem path to stdout capture; blob_pointer reserved.
 
@@ -77,6 +80,18 @@ CREATE TABLE IF NOT EXISTS job_runs (
 CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs(status);
 
+CREATE TABLE IF NOT EXISTS job_schedules (
+    -- Per-job cron schedule + idempotent fire state (bunsui schedule run).
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    cron TEXT NOT NULL,  -- standard 5-field cron (min hour dom mon dow)
+    timezone TEXT NOT NULL DEFAULT 'UTC',  -- IANA name; default UTC
+    last_fired_at TEXT,  -- UTC ISO of the slot we claimed / fired
+    next_due_at TEXT NOT NULL,  -- UTC ISO; fire when <= now
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_schedules_next_due ON job_schedules(next_due_at);
+
 CREATE TABLE IF NOT EXISTS asset_materializations (
     -- Per-run materialization / status events for assets (from run_results.json).
     id TEXT PRIMARY KEY,
@@ -121,7 +136,25 @@ EXPECTED_TABLES = (
     "assets",
     "jobs",
     "job_runs",
+    "job_schedules",
     "asset_materializations",
     "logs",
     "artifacts",
 )
+
+# Incremental DDL applied when upgrading an existing control DB.
+# Fresh installs get the full SCHEMA_SQL (CREATE IF NOT EXISTS); these
+# statements cover DBs that already recorded an older schema_migrations row.
+MIGRATIONS: dict[int, str] = {
+    2: """
+CREATE TABLE IF NOT EXISTS job_schedules (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    cron TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    last_fired_at TEXT,
+    next_due_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_schedules_next_due ON job_schedules(next_due_at);
+""",
+}

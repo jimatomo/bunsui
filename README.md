@@ -86,7 +86,25 @@ config:
 
 ファイルは単一ジョブ、`jobs:` リスト、またはジョブの YAML リストのいずれでも可。宣言から外したジョブは削除せず `enabled=0` にします。
 
-`bunsui job run <name>` は yaml を sync したうえで **`depends_on` をトポロジカル波（wave）で辿り**、indegree 0 の兄弟は並列実行し、前提成功後に下流へ進みます（サイクル / 欠落は実行前にエラー。波内で失敗したら in-flight の兄弟は完了待ち、その後の波は開始しない）。`--no-deps` で従来どおり名前付きジョブだけを実行できます。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（チェイン中の上流 async も同様に待機）。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけ、成功・失敗いずれでも `target/run_results.json` を `artifacts/` に保持して **`assets` / `asset_materializations` に upsert** します。各 dbt 試行のあと（成功・失敗を問わず）`target/run_results.json` があれば `ArtifactStore` に必ず put します（試行キー + latest + 最終試行では retain キー）。CLI が非ゼロ終了した場合、その blob があれば `config.retries`（追加の **`dbt retry`** 回数、デフォルト 0）と `config.retry_delay_seconds`（デフォルト 2）でネイティブ `dbt retry` を実行します（**同一 argv の再実行ではない**。store からの restore はリトライ時のみ。**dbt のみ**。python には適用しません。1 本の `job_runs` 行で最終結果を記録）。過去ランからの手動再実行は `bunsui job retry <run_id>` （新 `job_runs` 行・`trigger=retry`・prior の artifact を restore してから `dbt retry`；追加試行はジョブの `config.retries` に従う）。`ArtifactStore` の既定はローカル `artifacts/` で、クラウドオブジェクトストレージへ差し替え可能な DI です。**duckdb_load** は `.bunsui/warehouse.duckdb` を開き、`read_csv_auto` / `read_parquet` でローカルファイルを `config.table` へ load します（`replace` = `CREATE OR REPLACE`、`append` = 既存へ `INSERT`／未作成なら create）。短いログ（テーブル名・行数）を `logs/` に残し、成功時は **`table.<name>`** アセットを `materialized` として upsert します（S3 パス・スケジューリング・UI 専用フォーム・dbt sources 自動生成は対象外。パス解決は将来 URI / ArtifactStore 差し替え用の薄いヘルパ経由）。`--no-wait` で async の leaf を起動だけして戻ることもできます。サンプルは `example_dbt` → `example_python` の小さなチェインと、単独の `example_duckdb_load` / `example_python_async` です。
+任意で **`schedule`**（標準 5 フィールド cron）を付けられます。省略時のタイムゾーンは **UTC**（`timezone` または `schedule.timezone` で IANA 名を指定可）。不正な cron は `bunsui job sync` 時にエラーになります。
+
+```yaml
+# jobs/hourly_load.yaml
+name: hourly_load
+type: duckdb_load
+execution_mode: sync
+depends_on: []
+schedule: "0 * * * *"          # minute hour dom month dow
+# timezone: Asia/Tokyo         # optional; default UTC
+config:
+  path: data/orders.csv
+  table: orders
+  mode: replace
+```
+
+`bunsui schedule list` で次回発火時刻を、`bunsui schedule run`（フォアグラウンド）で due ジョブを既存のチェイン runner（`trigger=schedule`）経由で実行します。発火状態は SQLite の `job_schedules`（`last_fired_at` / `next_due_at`）に保存し、再起動しても同一スロットを二重発火しません。ダウン中に逃したスロットは **バックフィルしません**（キャッチアップ時は最大 1 回実行し、その後 `next_due` を「現在より先の次スロット」へ進める）。同一ジョブに `pending` / `running` のランがある間はスキップしてログします（デーモン化・分散ロック・UI は対象外）。
+
+`bunsui job run <name>` は yaml を sync したうえで **`depends_on` をトポロジカル波（wave）で辿り**、indegree 0 の兄弟は並列実行し、前提成功後に下流へ進みます（サイクル / 欠落は実行前にエラー。波内で失敗したら in-flight の兄弟は完了待ち、その後の波は開始しない）。`--no-deps` で従来どおり名前付きジョブだけを実行できます。**python sync** は同一プロセス内で完結します。**python async** は子プロセスで callable を実行し、親は **`job_runs.status` を SQLite でポーリング**して完了を検知します（チェイン中の上流 async も同様に待機）。**dbt** はプロジェクトの `dbt/` で CLI を sync サブプロセスとして実行し、stdout/stderr を `logs/` に保存して `logs` テーブルへ紐づけ、成功・失敗いずれでも `target/run_results.json` を `artifacts/` に保持して **`assets` / `asset_materializations` に upsert** します。各 dbt 試行のあと（成功・失敗を問わず）`target/run_results.json` があれば `ArtifactStore` に必ず put します（試行キー + latest + 最終試行では retain キー）。CLI が非ゼロ終了した場合、その blob があれば `config.retries`（追加の **`dbt retry`** 回数、デフォルト 0）と `config.retry_delay_seconds`（デフォルト 2）でネイティブ `dbt retry` を実行します（**同一 argv の再実行ではない**。store からの restore はリトライ時のみ。**dbt のみ**。python には適用しません。1 本の `job_runs` 行で最終結果を記録）。過去ランからの手動再実行は `bunsui job retry <run_id>` （新 `job_runs` 行・`trigger=retry`・prior の artifact を restore してから `dbt retry`；追加試行はジョブの `config.retries` に従う）。`ArtifactStore` の既定はローカル `artifacts/` で、クラウドオブジェクトストレージへ差し替え可能な DI です。**duckdb_load** は `.bunsui/warehouse.duckdb` を開き、`read_csv_auto` / `read_parquet` でローカルファイルを `config.table` へ load します（`replace` = `CREATE OR REPLACE`、`append` = 既存へ `INSERT`／未作成なら create）。短いログ（テーブル名・行数）を `logs/` に残し、成功時は **`table.<name>`** アセットを `materialized` として upsert します（S3 パス・UI 専用フォーム・dbt sources 自動生成は対象外。パス解決は将来 URI / ArtifactStore 差し替え用の薄いヘルパ経由）。`--no-wait` で async の leaf を起動だけして戻ることもできます。サンプルは `example_dbt` → `example_python` の小さなチェインと、単独の `example_duckdb_load` / `example_python_async` です。
 
 ```bash
 uv run bunsui job run example_python --project ../my-project          # dbt → python
@@ -95,6 +113,8 @@ uv run bunsui job run example_dbt --project ../my-project
 uv run bunsui job run example_duckdb_load --project ../my-project    # CSV → DuckDB
 uv run bunsui job retry <run_id> --project ../my-project             # native dbt retry from a prior run
 uv run bunsui job run example_python_async --project ../my-project
+uv run bunsui schedule list --project ../my-project                  # next fire times
+uv run bunsui schedule run --once --project ../my-project            # one poll; omit --once to loop
 ```
 
 ## Quick start
@@ -116,6 +136,7 @@ uv run bunsui job sync --project ../my-project
 uv run bunsui job run example_dbt --project ../my-project
 uv run bunsui job run example_python --project ../my-project
 uv run bunsui job run example_duckdb_load --project ../my-project
+uv run bunsui schedule list --project ../my-project
 uv run bunsui schema --project ../my-project
 uv run pytest
 ```
@@ -143,13 +164,13 @@ bun run dev:ui
 
 ## Roadmap
 
-**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets、**dbt native `dbt retry` + always-retain `ArtifactStore` + `job retry <run_id>`**、**`duckdb_load`（CSV/Parquet → DuckDB）**）、SQLite スキーマ、Hono API（読み取り + Jobs の **Run**）、React UI（Jobs の最終ラン表示 / Run ボタン / Assets / Logs）、テストと CI。
+**いま動くもの:** プロジェクト初期化（`bunsui init`）、`bunsui job sync`、`bunsui job run`（`depends_on` トポロジカル波 + 独立兄弟の並列 fan-out / `--no-deps`、python sync / async → `job_runs`、async は SQLite ポーリング、dbt sync → logs + `run_results.json` → assets、**dbt native `dbt retry` + always-retain `ArtifactStore` + `job retry <run_id>`**、**`duckdb_load`（CSV/Parquet → DuckDB）**）、**ジョブ yaml の任意 `schedule`（5 フィールド cron、既定 TZ=UTC）+ `bunsui schedule list|run`（SQLite に発火状態、二重発火なし、キャッチアップは最大 1 回、overlap skip）**、SQLite スキーマ、Hono API（読み取り + Jobs の **Run**）、React UI（Jobs の最終ラン表示 / Run ボタン / Assets / Logs）、テストと CI。
 
 **これから実装するもの:**
 
 - stdout の増分 / ストリーミングパース（ログ UI 向け）
-- スケジューリング / cron
-- 本番スケジューリング
+- 本番スケジューリング（daemon / launchd / systemd、分散ロック）
+- スケジュール UI
 - UI でのリトライ設定・python リトライ
 - S3/GCS などクラウド向け `ArtifactStore` 実装
 
