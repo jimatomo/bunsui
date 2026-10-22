@@ -1,10 +1,12 @@
 """Run jobs and record ``job_runs``.
 
 Supports ``type=python`` (``execution_mode=sync`` in-process or ``async`` child +
-SQLite poll) and ``type=dbt`` (``execution_mode=sync`` subprocess + ``run_results``
-asset ingest, with optional native ``dbt retry`` via ``config.retries``). ``run_job`` runs one named job;
-``run_job_chain`` walks ``depends_on`` in topological waves (independent siblings
-in parallel) and stops starting new waves after a failure.
+SQLite poll), ``type=dbt`` (``execution_mode=sync`` subprocess + ``run_results``
+asset ingest, with optional native ``dbt retry`` via ``config.retries``), and
+``type=duckdb_load`` (``execution_mode=sync`` CSV/Parquet → DuckDB warehouse).
+``run_job`` runs one named job; ``run_job_chain`` walks ``depends_on`` in
+topological waves (independent siblings in parallel) and stops starting new
+waves after a failure.
 """
 
 from __future__ import annotations
@@ -26,6 +28,13 @@ from typing import Any
 
 from bunsui.config import load_config
 from bunsui.db import bootstrap_sqlite, connect, utc_now_iso
+from bunsui.duckdb_load import (
+    DuckdbLoadError,
+    format_load_log,
+    load_into_duckdb,
+    parse_duckdb_load_config,
+    upsert_load_asset,
+)
 from bunsui.jobs import sync_jobs
 from bunsui.paths import LOGS_DIRNAME, ProjectPaths
 from bunsui.artifacts import (
@@ -934,6 +943,88 @@ def _artifact_retention_days(paths: ProjectPaths) -> int:
     return retention_days
 
 
+def _run_sync_duckdb_load(
+    paths: ProjectPaths,
+    *,
+    run_id: str,
+    job_id: str,
+    job_name: str,
+    config: dict[str, Any],
+    trigger: str,
+) -> RunResult:
+    """Load CSV/Parquet into ``paths.duckdb_path``; write logs + table asset."""
+    load_cfg = parse_duckdb_load_config(config)
+    now = utc_now_iso()
+    with connect(paths.sqlite_path) as conn:
+        _insert_running_run(
+            conn,
+            run_id=run_id,
+            job_id=job_id,
+            trigger=trigger,
+            now=now,
+        )
+
+    log_parts: list[str] = []
+    try:
+        result = load_into_duckdb(
+            paths.duckdb_path,
+            project_root=paths.root,
+            config=load_cfg,
+        )
+    except DuckdbLoadError as exc:
+        finished = utc_now_iso()
+        message = str(exc)
+        log_parts.append(f"duckdb_load failed: {message}\n")
+        with connect(paths.sqlite_path) as conn:
+            _store_run_log(
+                conn,
+                paths=paths,
+                run_id=run_id,
+                output="".join(log_parts),
+                created_at=finished,
+            )
+            _finish_run(
+                conn,
+                run_id=run_id,
+                status="failed",
+                error_message=message[:_ERROR_MESSAGE_MAX]
+                if len(message) > _ERROR_MESSAGE_MAX
+                else message,
+                finished_at=finished,
+            )
+        return RunResult(
+            run_id=run_id,
+            job_name=job_name,
+            status="failed",
+            error_message=message,
+        )
+
+    finished = utc_now_iso()
+    log_parts.append(format_load_log(result))
+    with connect(paths.sqlite_path) as conn:
+        _store_run_log(
+            conn,
+            paths=paths,
+            run_id=run_id,
+            output="".join(log_parts),
+            created_at=finished,
+        )
+        upsert_load_asset(
+            conn,
+            result=result,
+            run_id=run_id,
+            created_at=finished,
+        )
+        _finish_run(
+            conn,
+            run_id=run_id,
+            status="succeeded",
+            error_message=None,
+            finished_at=finished,
+        )
+        conn.commit()
+    return RunResult(run_id=run_id, job_name=job_name, status="succeeded")
+
 
 def run_job(
     paths: ProjectPaths,
@@ -954,7 +1045,9 @@ def run_job(
     the ``logs`` table, and ingest ``target/run_results.json`` into ``assets``.
     Optional ``config.retries`` / ``config.retry_delay_seconds`` invoke native
     ``dbt retry`` after a non-zero exit when ``target/run_results.json`` is
-    available (dbt only; python is unchanged).
+    available (dbt only; python is unchanged). ``duckdb_load`` jobs read local
+    CSV/Parquet into ``.bunsui/warehouse.duckdb`` (sync only), log row counts,
+    and upsert a ``table.<name>`` asset.
 
     Validation failures (missing / disabled / bad config) raise ``JobRunError``
     without leaving a run row.
@@ -1002,6 +1095,16 @@ def run_job(
             build_dbt_argv(config)
             parse_dbt_retry_policy(config)
             # Release connection; dbt path opens its own for insert/update.
+        elif job_type == "duckdb_load":
+            if execution_mode != "sync":
+                raise JobRunError(
+                    f"job {job_name!r} has execution_mode={execution_mode!r}; "
+                    "duckdb_load jobs only support sync for now"
+                )
+            try:
+                parse_duckdb_load_config(config)
+            except DuckdbLoadError as exc:
+                raise JobRunError(str(exc)) from exc
         elif job_type == "python":
             callable_spec = config.get("callable")
             if not callable_spec:
@@ -1033,11 +1136,21 @@ def run_job(
         else:
             raise JobRunError(
                 f"job {job_name!r} has type={job_type!r}; "
-                "supported types are python and dbt"
+                "supported types are python, dbt, and duckdb_load"
             )
 
     if job_type == "dbt":
         return _run_sync_dbt(
+            paths,
+            run_id=run_id,
+            job_id=job_id,
+            job_name=job_name,
+            config=config,
+            trigger=trigger,
+        )
+
+    if job_type == "duckdb_load":
+        return _run_sync_duckdb_load(
             paths,
             run_id=run_id,
             job_id=job_id,

@@ -61,6 +61,18 @@ assert model and 'example' in model[0] and model[1]=='materialized', model
 art=c.execute('select path from artifacts where job_run_id=?', (r[0],)).fetchone()
 assert art and art[0], art
 "
+          uv run bunsui job run example_duckdb_load --project /tmp/bunsui-ci
+          uv run python -c "
+import sqlite3, duckdb
+c=sqlite3.connect('/tmp/bunsui-ci/.bunsui/control.sqlite')
+r=c.execute(\"select j.name, r.status from job_runs r join jobs j on j.id=r.job_id order by r.created_at desc limit 1\").fetchone()
+assert r==('example_duckdb_load','succeeded'), r
+asset=c.execute(\"select asset_key, status from assets where asset_key='table.orders'\").fetchone()
+assert asset and asset[1]=='materialized', asset
+con=duckdb.connect('/tmp/bunsui-ci/.bunsui/warehouse.duckdb')
+assert con.execute('select count(*) from orders').fetchone()[0]==3
+con.close()
+"
 
   web:
     runs-on: ubuntu-latest

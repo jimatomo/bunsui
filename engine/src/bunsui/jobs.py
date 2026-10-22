@@ -1,7 +1,8 @@
 """Declare jobs in ``bunsui.yaml`` and/or ``jobs/*.yaml``, sync into SQLite.
 
 This module syncs declarations into the ``jobs`` table. Execution of python
-callables and dbt CLI jobs lives in ``bunsui.runner`` (``bunsui job run``).
+callables, dbt CLI jobs, and ``duckdb_load`` lives in ``bunsui.runner``
+(``bunsui job run``).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import yaml
 from bunsui.db import bootstrap_sqlite, connect, utc_now_iso
 from bunsui.paths import JOBS_DIRNAME, ProjectPaths
 
-ALLOWED_JOB_TYPES = frozenset({"dbt", "python"})
+ALLOWED_JOB_TYPES = frozenset({"dbt", "python", "duckdb_load"})
 ALLOWED_EXECUTION_MODES = frozenset({"sync", "async"})
 
 INLINE_SOURCE = "bunsui.yaml"
@@ -287,6 +288,18 @@ def example_job_files() -> dict[str, dict[str, Any]]:
             "depends_on": [],
             "config": {
                 "callable": "sample:async_main",
+            },
+        },
+        "example_duckdb_load.yaml": {
+            "name": "example_duckdb_load",
+            "type": "duckdb_load",
+            "execution_mode": "sync",
+            "depends_on": [],
+            "config": {
+                "path": "data/orders.csv",
+                "table": "orders",
+                "mode": "replace",
+                # format: optional; auto-detected from .csv / .parquet
             },
         },
     }

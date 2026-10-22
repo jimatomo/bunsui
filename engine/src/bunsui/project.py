@@ -71,6 +71,13 @@ def async_main() -> None:
     print("hello from sample:async_main")
 """
 
+SAMPLE_ORDERS_CSV = """\
+id,customer,amount
+1,alice,10.5
+2,bob,20.0
+3,carol,7.25
+"""
+
 
 def init_project(
     path: Path | str | None = None,
@@ -91,6 +98,10 @@ def init_project(
     write_config(paths.config_file, default_config(project_name))
     write_example_job_files(paths.jobs_dir)
     (paths.root / "sample.py").write_text(SAMPLE_PYTHON_MODULE, encoding="utf-8")
+
+    data_dir = paths.root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "orders.csv").write_text(SAMPLE_ORDERS_CSV, encoding="utf-8")
 
     # Create a valid empty DuckDB warehouse (an empty touch() is not a DB file).
     if not paths.duckdb_path.exists():
